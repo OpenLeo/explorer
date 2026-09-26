@@ -1,0 +1,9 @@
+id: 0x0C5
+name: 'BIOVOLUME'
+type: 'can'
+length: 2
+periodicity: ['200ms']
+senders: ['COV_P']
+receivers: ['BSI']
+signals:
+  VOLUME: {bits: '1.7-2.0', units: 'L', factor: 0.1}

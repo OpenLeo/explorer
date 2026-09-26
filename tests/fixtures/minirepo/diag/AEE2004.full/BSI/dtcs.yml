@@ -1,0 +1,4 @@
+B1003:
+  display_name: {en: 'Supply voltage too low', fr: 'Tension trop basse'}
+U1000:
+  display_name: {en: 'CAN bus off', fr: 'Bus CAN off'}

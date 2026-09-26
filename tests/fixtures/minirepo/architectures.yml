@@ -1,0 +1,23 @@
+AEE2001:
+  full:
+    comment: {en: 'VAN+CAN', fr: 'VAN+CAN'}
+    years: '1998-2008'
+    networks:
+      VAN:
+        CONF: {protocol: 'VAN', bitrate: 125, display_name: {en: 'Comfort', fr: 'Confort'}}
+AEE2004:
+  full:
+    comment: {en: 'Full-CAN, 1st gen', fr: 'Full-CAN, 1ere generation'}
+    years: '2004-2008'
+    networks:
+      HS:
+        IS: {protocol: 'CAN', bitrate: 500, display_name: {en: 'Inter-systems', fr: 'Inter-systemes'}}
+      LS:
+        CONF: {protocol: 'CAN', bitrate: 125, display_name: {en: 'Comfort', fr: 'Confort'}}
+      LIN:
+        LIN: {protocol: 'LIN', bitrate: 19.2}
+    protocols: ['CAN', 'LIN', 'UDS']
+  ev:
+    comment: {en: 'Full-CAN 2007 evolution', fr: 'Full-CAN evolution 2007'}
+    parent: 'full'
+    years: '2007-2012'

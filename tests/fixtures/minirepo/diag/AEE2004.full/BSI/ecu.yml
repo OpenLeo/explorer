@@ -1,0 +1,7 @@
+node: 'BSI'
+protocols: ['UDS']
+addressing:
+  - {transport: 'can-tp', bus: 'HS.IS', request_id: 0x752, response_id: 0x652}
+services: [0x10, 0x22, 0x27]
+security_access:
+  - {level: 0x03, algorithm: 'PSA_SEED_KEY', key: 'B2B2'}

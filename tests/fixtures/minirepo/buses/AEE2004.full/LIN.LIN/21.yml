@@ -1,0 +1,10 @@
+id: 0x21
+name: 'WIPER_CMD'
+type: 'lin'
+length: 2
+periodicity: ['20ms']
+senders: ['BSI']
+receivers: ['ESSUIE']
+lin: {checksum: 'enhanced', master: 'BSI'}
+signals:
+  SPEED: {bits: '1.7-1.6', values: {0: {en: 'off'}, 1: {en: 'slow'}, 2: {en: 'fast'}}}

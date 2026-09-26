@@ -1,0 +1,44 @@
+id: 0x0B6
+name: 'VEHICLE_SPEED'
+type: 'can'
+length: 8
+periodicity: ['50ms']
+senders: ['BSI']
+receivers: ['CMM', 'CMB']
+comment: {en: 'Engine speed and vehicle speed', fr: 'Regime et vitesse'}
+signals:
+  ENGINE_RPM:
+    bits: '1.7-2.3'
+    factor: 0.125
+    units: 'rpm'
+    min: 0
+    max: 1023.875
+    invalid: 0x1FFF
+    comment: {en: 'Engine speed', fr: 'Regime moteur'}
+  UNUSED_1:
+    bits: '2.2-2.0'
+    unused: true
+  SPEED:
+    bits: '3.7-4.0'
+    factor: 0.01
+    units: 'km/h'
+    comment: {en: 'Vehicle speed', fr: 'Vitesse vehicule'}
+  TEMP:
+    bits: '5.7-5.0'
+    type: 'sint'
+    units: '°C'
+  STATE:
+    bits: '6.7-6.6'
+    values:
+      0x00: {en: 'off', fr: 'arret'}
+      0x01: {en: 'on', fr: 'marche'}
+      0x03: {unused: true}
+    alternatives:
+      - note: {en: 'Seen as 3 bits on some cars', fr: 'Vu sur 3 bits'}
+        bits: '6.7-6.5'
+  ODO_LE:
+    bits: '7.7-8.0'
+    byte_order: 'little_endian'
+    factor: 0.1
+    units: 'km'
+    receivers: ['CMB']

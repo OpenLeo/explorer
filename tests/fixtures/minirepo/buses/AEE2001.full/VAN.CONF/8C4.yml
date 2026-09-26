@@ -1,0 +1,11 @@
+id: 0x8C4
+name: 'RADIO_EVENTS'
+type: 'van'
+length: 28
+periodicity: ['trigger']
+senders: ['RAD']
+receivers: ['EMF']
+van: {access: 'write', ack: true}
+signals:
+  EVENT: {bits: '1.7-1.0'}
+  DATA: {bits: '2.7-28.0', type: 'bytes'}

@@ -1,0 +1,10 @@
+id: 0x1A8
+name: 'MUXED'
+type: 'can'
+length: 4
+periodicity: ['100ms']
+senders: ['CMM']
+receivers: ['BSI']
+signals:
+  PAGE: {bits: '1.7-1.0', mux_selector: true}
+  A: {bits: '2.7-3.0', factor: 0.5, mux: {selector: 'PAGE', values: [0]}}

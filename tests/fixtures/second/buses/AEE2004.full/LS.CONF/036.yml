@@ -1,0 +1,11 @@
+id: 0x036
+name: 'BSI_COMMANDS'
+type: 'can'
+length: 8
+periodicity: ['100ms']
+senders: ['BSI']
+receivers: ['CMB', 'COV_P']
+signals:
+  ECO_MODE: {bits: '3.7'}
+  BRIGHTNESS: {bits: '4.3-4.0', max: 15}
+  BIOVOLUME_REQ: {bits: '8.7'}

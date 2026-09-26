@@ -1,0 +1,11 @@
+id: 0x6A8
+name: 'ISOTP_TEXT'
+type: 'can-tp'
+length: 64
+periodicity: ['request']
+senders: ['BSI']
+receivers: ['CMB']
+isotp: {flow_control_id: 0x6A9, padding: 0x00}
+signals:
+  PAGE: {bits: '1.7-1.4'}
+  TEXT: {bits: '2.7-n', type: 'str'}

@@ -1,0 +1,8 @@
+id: 0x2A8
+name: 'NEW_FRAME'
+type: 'can'
+length: 1
+periodicity: ['1000ms']
+senders: ['BSI']
+signals:
+  X: {bits: '1.7-1.0'}

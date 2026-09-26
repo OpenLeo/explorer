@@ -1,0 +1,16 @@
+BSI:
+  bus: ['HS.IS', 'LS.CONF', 'LIN.LIN']
+  id: {HS: 0x12, LS: 0x12}
+  alt: ['VSM']
+  name: {en: 'Built-In System', fr: 'Boitier de Servitude Intelligent'}
+  diag: {protocols: ['UDS'], bus: 'HS.IS', request_id: 0x752, response_id: 0x652}
+CMM:
+  bus: ['HS.IS']
+  id: {HS: 0x08}
+  name: {en: 'Engine ECU', fr: 'Calculateur moteur'}
+CMB:
+  bus: ['LS.CONF']
+  name: {en: 'Instrument cluster', fr: 'Combine'}
+ESSUIE:
+  bus: ['LIN.LIN']
+  name: {en: 'Wiper', fr: 'Essuie-vitre'}

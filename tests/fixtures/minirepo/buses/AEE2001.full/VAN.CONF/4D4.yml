@@ -1,0 +1,10 @@
+id: 0x4D4
+name: 'Radio status'
+type: 'VAN'
+length: 3
+periodicity: 100
+senders: ['RAD']
+receivers: ['EMF']
+signals:
+  VOLUME: {bits: '1', unit: '%', resolution: 1, type: 'uint8'}
+  BROKEN: {bits: '2.0-2.7'}

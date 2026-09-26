@@ -1,0 +1,12 @@
+codes:
+  A70: ['peugeot 207', 'peugeot 207+']
+  A71: 'peugeot 207'
+brand: ['peugeot']
+years: '2006-2014'
+versions:
+  all:
+    architecture: 'AEE2004.full'
+    nodes:
+      HS: ['BSI', 'CMM']
+      LS: ['BSI', 'CMB']
+    optional_nodes: ['CMB']

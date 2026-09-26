@@ -1,0 +1,21 @@
+id: 0x1A8
+name: 'MUXED'
+type: 'can'
+length: 4
+periodicity: ['100ms', 'trigger']
+senders: ['CMM']
+receivers: ['BSI']
+signals:
+  PAGE:
+    bits: '1.7-1.0'
+    mux_selector: true
+    values: {0: {en: 'page 0'}, 1: {en: 'page 1'}}
+  A:
+    bits: '2.7-3.0'
+    mux: {selector: 'PAGE', values: [0]}
+  B:
+    bits: '2.7-2.0'
+    mux: {selector: 'PAGE', values: [1]}
+alternatives:
+  - note: {en: 'Period 200ms on 2008+ cars', fr: 'Periode 200ms sur les voitures 2008+'}
+    periodicity: ['200ms']

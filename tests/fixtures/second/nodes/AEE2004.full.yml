@@ -1,0 +1,5 @@
+COV_P:
+  bus: ['LS.CONF']
+  id: {LS: 0x05}
+  name: {en: 'Body volume sensor (passenger)', fr: 'Capteur volume passager'}
+  released: false

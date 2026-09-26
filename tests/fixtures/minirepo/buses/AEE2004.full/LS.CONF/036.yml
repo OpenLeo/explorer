@@ -1,0 +1,12 @@
+id: 0x036
+name: 'BSI_COMMANDS'
+type: 'can'
+length: 8
+periodicity: ['100ms']
+senders: ['BSI']
+receivers: ['CMB', 'UNKNOWN_ECU']
+signals:
+  ECO_MODE:
+    bits: '3.7'
+    values: {0: {en: 'normal'}, 1: {en: 'eco'}}
+  BRIGHTNESS: {bits: '4.3-4.0'}

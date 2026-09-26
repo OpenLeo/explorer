@@ -1,0 +1,6 @@
+AEE2004:
+  full:
+    comment: {en: 'Full-CAN, 1st gen'}
+    networks:
+      LS:
+        CONF: {protocol: 'CAN', bitrate: 125}

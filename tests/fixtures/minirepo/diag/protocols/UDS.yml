@@ -1,0 +1,16 @@
+protocol: 'UDS'
+standard: 'ISO 14229'
+services:
+  0x10:
+    name: 'DIAGNOSTIC_SESSION_CONTROL'
+    request: 'SID SUBFN'
+    subfunctions: {0x01: {en: 'default'}, 0x03: {en: 'extended'}}
+  0x22:
+    name: 'READ_DATA_BY_IDENTIFIER'
+    request: 'SID DID_HI DID_LO'
+negative_responses:
+  0x31: {en: 'request out of range'}
+algorithms:
+  PSA_SEED_KEY:
+    comment: {en: 'PSA seed/key'}
+    pseudocode: 'see sandbox/uds_auth_algorithm.py'
