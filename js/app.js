@@ -14,12 +14,13 @@ import { renderCars } from './ui/views/cars.js';
 import { renderEcus } from './ui/views/ecus.js';
 import { renderDiag } from './ui/views/diag.js';
 import { renderTools } from './ui/views/tools.js';
+import { renderSignals } from './ui/views/signals.js';
 import { renderAbout } from './ui/views/about.js';
 import { renderSettings } from './ui/views/settings.js';
 
 const VIEWS = {
   frames: renderFrames, arch: renderArchs, cars: renderCars, ecus: renderEcus, diag: renderDiag,
-  tools: renderTools, about: renderAbout, settings: renderSettings,
+  tools: renderTools, signals: renderSignals, about: renderAbout, settings: renderSettings,
 };
 const NO_DB_VIEWS = new Set(['about', 'settings']);
 

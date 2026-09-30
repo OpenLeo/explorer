@@ -160,7 +160,7 @@ export function signalDetails(s, archvar) {
   if (s.altNames.length) rows.push(['Alt names', s.altNames.join(', ')]);
   if (s.unused) rows.push(['', html`<i>unused / reserved</i>`]);
   return html`<div class="sigdetails" style="--h:0">
-    <h4>${s.name}</h4>
+    <h4>${s.name}</h4><a class="small" href="#/signals/${encodeURIComponent(s.name)}">Find across architectures →</a>
     ${s.comment ? html`<p>${t(s.comment)}</p>` : ''}
     <dl class="kv">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>
     ${s.values.length ? html`<div class="valtable">${valuesList(s, 64)}</div>` : ''}

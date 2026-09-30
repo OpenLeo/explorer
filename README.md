@@ -35,6 +35,9 @@ No build step, no server code: `index.html` + ES modules + one CSS file. The onl
   - **Other architectures**: same ID elsewhere with a signal-level diff.
   - Variant inheritance (inherited frames, "changed in this variant" + diff), symbolic links
     ("same as AEE2004.full LS.CONF 036"), multi-source switch, "never released" badges.
+- **Signals**: searchable exact-name cross-reference across effective architecture variants, independent of frame ID.
+  Each signal page groups occurrences by architecture and shows the containing frame, bus, bit range, encoding,
+  timing, source/inheritance status, and links back to the frame's Signals tab.
 - **ECUs**: list per variant (inherited nodes marked, pseudo nodes such as `DIAG_TOOL`), ECU page with the frames
   sent/received, diag addressing, a "build a custom ECU / emulate it" checklist (kept in the browser),
   cars fitted with it, DBC export limited to its frames.
@@ -135,6 +138,7 @@ js/core/                UI independent logic (runs in node, unit tested)
   cache.js              IndexedDB cache + safe localStorage
   repo.js               database build: merge sources, variants inheritance, nodes, cars, frames, diag,
                         overrides, search index, diffs
+  signalref.js          exact-name signal catalog across effective variant frames and differing frame IDs
   dbc.js                DBC and JSON export
   codegen.js            C header, Python, transmit snippets, LIN PID/checksum
   logparse.js           candump / SavvyCAN / ASC / plain log parsing, per-ID statistics
@@ -150,7 +154,8 @@ js/ui/                  DOM code
   simpleview.js         simple (byte by byte) view
   diagrams.js           SVG topology and emitters/receivers diagrams
   vlist.js              virtualized list
-  views/                one module per tab (frames, frame detail, archs, cars, ecus, diag, tools, about, settings)
+  views/                one module per tab (frames, frame detail, signals, archs, cars, ecus, diag, tools, about,
+                        settings)
 tools/make_manifest.py  manifest generator for HTTP sources
 tests/                  node --test unit tests + fixtures (small repositories with symlinks, a second source)
 ```

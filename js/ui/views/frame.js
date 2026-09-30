@@ -195,7 +195,7 @@ function renderSignalsTab({ f, signals, hues }) {
   const rows = signals.map((s) => {
     const p = s.pos;
     return html`<tr class="${s.unused ? 'muted' : ''}" data-sig="${s.name}">
-      <td><span class="swatch" style="--h:${hues.get(s.name) ?? 200}"></span><b class="mono">${s.name}</b>${s.altNames.length ? html`<div class="small muted">${s.altNames.join(', ')}</div>` : ''}${s.alternatives.length ? html` <span class="badge badge-alt">alt</span>` : ''}${s.issues.some((i) => i.level === 'error') ? html` <span class="badge badge-warn" title="${s.issues.map((i) => i.msg).join('\n')}">⚠</span>` : ''}</td>
+      <td><span class="swatch" style="--h:${hues.get(s.name) ?? 200}"></span><a href="#/signals/${encodeURIComponent(s.name)}" class="mono" title="Find this signal across architectures"><b>${s.name}</b></a>${s.altNames.length ? html`<div class="small muted">${s.altNames.join(', ')}</div>` : ''}${s.alternatives.length ? html` <span class="badge badge-alt">alt</span>` : ''}${s.issues.some((i) => i.level === 'error') ? html` <span class="badge badge-warn" title="${s.issues.map((i) => i.msg).join('\n')}">⚠</span>` : ''}</td>
       <td class="mono">${s.bits}</td>
       <td class="mono">${p ? `${p.startByte}.${p.startBit}` : '?'}</td>
       <td class="num">${p ? (p.toEnd ? 'var' : p.width) : '?'}</td>
