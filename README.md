@@ -57,6 +57,9 @@ No build step, no server code: `index.html` + ES modules + one CSS file. The onl
   bit position converter (PSA ↔ DBC Motorola ↔ Motorola LSB ↔ Intel), DBC / JSON export (whole bus or filtered),
   bus load estimator, data issues panel.
 - Global search (`/`): frame ID (`036`, `0x036`), frame/signal names, ECUs, car codes, DTCs, DIDs.
+- Update check: the explorer compares the copy of its own files kept by the browser cache with the server copies
+  (at start-up, when the tab is shown again, every 30 minutes, or from About) and offers to update when a newer
+  version was deployed (it downloads the changed files past the cache, then reloads).
 - Hash routing (shareable URLs such as `#/frames/AEE2004.full/LS.CONF/036?tab=decode`), content language
   selector (en, fr, es, de, it, pl, ru, zh, hu with fallback en → fr → any), light/dark theme.
 
@@ -151,6 +154,7 @@ js/core/                UI independent logic (runs in node, unit tested)
   isotp.js              ISO-TP segmentation, flow control, reassembly
   seedkey.js            PSA SecurityAccess seed/key algorithm
   busload.js            CAN / VAN / LIN bus load estimation
+  appupdate.js          fingerprints of the app files (running copy vs server copy)
   diagref.js            built-in UDS / KWP2000 / OBD service and NRC tables, request description
   relations.js          diagnostic / ISO-TP ID pairs, common frame families
 js/ui/                  DOM code
@@ -161,6 +165,7 @@ js/ui/                  DOM code
   simpleview.js         simple (byte by byte) view
   diagrams.js           SVG topology and emitters/receivers diagrams
   vlist.js              virtualized list
+  update.js             "new version available" check and bar
   views/                one module per tab (frames, frame detail, signals, archs, cars, ecus, diag, tools, about,
                         settings)
 tools/make_manifest.py  manifest generator for HTTP sources

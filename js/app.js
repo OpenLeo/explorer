@@ -17,6 +17,7 @@ import { renderTools } from './ui/views/tools.js';
 import { renderSignals } from './ui/views/signals.js';
 import { renderAbout } from './ui/views/about.js';
 import { renderSettings } from './ui/views/settings.js';
+import { initUpdateCheck } from './ui/update.js';
 
 const VIEWS = {
   frames: renderFrames, arch: renderArchs, cars: renderCars, ecus: renderEcus, diag: renderDiag,
@@ -290,6 +291,8 @@ function init() {
   if (matchMedia) {
     try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); } catch (e) { /* old browsers */ }
   }
+  // before the data files are fetched: the resource timing buffer then still lists every module of the app
+  initUpdateCheck();
   route();
   loadAll(false);
 }

@@ -429,6 +429,9 @@ tr.unknown td { background: var(--warn-bg); }
 .progress { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 4px 0; }
 .progress .bar { height: 100%; background: var(--accent); transition: width .15s; }
 .progress .bar.err { background: var(--danger); }
+.update-bar { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 90; width: min(720px, calc(100vw - 24px)); display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; padding: 10px 14px; background: var(--panel); border: 1px solid var(--accent); border-left-width: 4px; border-radius: 10px; box-shadow: var(--shadow); font-size: 13px; }
+.update-bar > span:first-child { flex: 1 1 260px; min-width: 0; }
+.update-actions { display: flex; gap: 6px; margin-left: auto; }
 #toasts { position: fixed; right: 16px; bottom: 16px; z-index: 100; display: flex; flex-direction: column; gap: 6px; }
 .toast { background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; box-shadow: var(--shadow); transition: opacity .5s; }
 .toast-error { background: var(--danger); color: #fff; }

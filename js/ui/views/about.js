@@ -1,6 +1,7 @@
 // About: bit notation, architectures, disclaimer.
 
-import { html, setHtml } from '../dom.js';
+import { html, setHtml, on, $ } from '../dom.js';
+import { updateStatus, checkForUpdate, applyUpdate } from '../update.js';
 import { renderGrid, hueMap } from '../bitgrid.js';
 import { normalizeFrame } from '../../core/normalize.js';
 
@@ -18,6 +19,15 @@ function demoFrame() {
   });
   Object.assign(demo, { archvar: 'X', netbus: 'X', idHex: '0B6', key: 'demo', uid: 'demo' });
   return demo;
+}
+
+function versionInfo() {
+  const u = updateStatus();
+  if (!u.running) return html`<span class="muted">Update check unavailable (the page must be served over HTTP).</span>`;
+  const when = u.lastCheck ? new Date(u.lastCheck).toLocaleTimeString() : null;
+  return html`Running build <code>${u.running}</code> <span class="muted">(${u.files} files)</span>.
+    ${u.changed.length ? html`<b>A newer version is on the server</b> (<code>${u.latest}</code>, ${u.changed.length} file${u.changed.length > 1 ? 's' : ''} changed). <button class="btn btn-sm primary" data-act="apply-update">Update now</button>`
+      : when ? html`<span class="muted">Up to date (checked at ${when}).</span>` : html`<span class="muted">Not checked yet.</span>`}`;
 }
 
 export function renderAbout(root) {
@@ -54,6 +64,19 @@ export function renderAbout(root) {
 
     <h3>Data</h3>
     <p>By default the data is loaded from GitHub (<code>prototux/PSA-RE</code>). Other sources (a fork, a local copy served over HTTP, a local folder, or several repositories at once) can be added in <a href="#/settings">settings</a>. Parsed data is cached in your browser (IndexedDB) until the repository changes. Data warnings (⚠ badges) show where the YAML does not follow the DBMUXEv format; the explorer tries to read it anyway.</p>
+    <h3>Explorer version</h3>
+    <p>The explorer checks whether the copy kept by your browser is older than the one on the server (when it starts, when the tab is shown again, and every 30 minutes) and offers to update.</p>
+    <p class="row"><span id="upd-info">${versionInfo()}</span> <button class="btn btn-sm" data-act="check-update">Check for updates</button></p>
     <p class="muted small">Inspired by SavvyCAN and Vector CANdb++. The seed/key algorithm is ported from <code>PSA-RE/sandbox/uds_auth_algorithm.py</code>.</p>
   </div>`);
+  if (!root._aboutBound) {
+    root._aboutBound = true;
+    on(root, 'click', '[data-act=check-update]', async (ev, el) => {
+      el.disabled = true;
+      await checkForUpdate({ force: true });
+      el.disabled = false;
+      setHtml($('#upd-info', root), versionInfo());
+    });
+    on(root, 'click', '[data-act=apply-update]', () => applyUpdate());
+  }
 }
