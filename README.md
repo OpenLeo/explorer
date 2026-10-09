@@ -21,7 +21,8 @@ No build step, no server code: `index.html` + ES modules + one CSS file. The onl
   data warnings, source), virtualized list, and per frame:
   - **Grid**: SavvyCAN / CANdb++ style bit layout (8 columns, one row per byte, MSB/LSB markers, hatched
     undocumented bits, mux selector, big-endian and little-endian multi-byte signals, long can-tp/VAN payloads
-    collapsed), hover details and legend;
+    collapsed), hover details and legend; click a signal (grid, legend, simple view, tables) to keep it selected
+    until it is clicked again or another one is clicked (bottom sheet on phones);
   - **Simple view**: bit string with letter groups and staggered callouts, plus a
     prose listing ("Byte 3, bits 7-6: … 0 = closed, 1 = open");
   - **Signals** table (PSA bits, start, length, DBC Motorola start bit, type, scaling, range, invalid/default, values);
@@ -33,6 +34,11 @@ No build step, no server code: `index.html` + ES modules + one CSS file. The onl
     Python decoder/encoder, DBC snippet;
   - **Alternatives**: conflicting observations side by side, applicable to every other tab;
   - **Other architectures**: same ID elsewhere with a signal-level diff.
+  - **ID pairs**: diagnostic request ⇄ response (from `diag/*/*/ecu.yml` addressing, the nodes' `diag` blocks,
+    ISO 15765-4 OBD IDs, or guessed from the frame names on the bus) and ISO-TP data ⇄ flow control frames,
+    with links to the partner frame, the ECU diag page and the request builder;
+  - **Common frames** (version, supervision, fault log / event, wake-up, diagnostics, flow control, VIN): generic
+    layouts sent by many ECUs are badged in the list, filterable, and list the other frames of the same kind;
   - Variant inheritance (inherited frames, "changed in this variant" + diff), symbolic links
     ("same as AEE2004.full LS.CONF 036"), multi-source switch, "never released" badges.
 - **Signals**: searchable exact-name cross-reference across effective architecture variants, independent of frame ID.
@@ -146,6 +152,7 @@ js/core/                UI independent logic (runs in node, unit tested)
   seedkey.js            PSA SecurityAccess seed/key algorithm
   busload.js            CAN / VAN / LIN bus load estimation
   diagref.js            built-in UDS / KWP2000 / OBD service and NRC tables, request description
+  relations.js          diagnostic / ISO-TP ID pairs, common frame families
 js/ui/                  DOM code
   dom.js                html`` tagged template (auto-escaping), delegated events, copy/download, toasts
   state.js              settings and shared app state

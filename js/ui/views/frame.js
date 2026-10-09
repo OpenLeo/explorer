@@ -4,8 +4,9 @@ import { html, raw, $, $$, on, setHtml } from '../dom.js';
 import { app, lang, sourceMetaById } from '../state.js';
 import {
   t, frameBadges, periodText, typeBadge, nodeList, nodeLink, codeBlock, kv, valuesList, physText, busLabel, busInfo,
-  protocolBadge, sourceBadge, unreleasedBadge, emptyState, tabs,
+  protocolBadge, sourceBadge, unreleasedBadge, emptyState, tabs, canIdText,
 } from '../widgets.js';
+import { FAMILY_BY_ID, partnerFrames } from '../../core/relations.js';
 import { renderGrid, renderLegend, signalDetails, hueMap } from '../bitgrid.js';
 import { renderSimpleView } from '../simpleview.js';
 import { flowSvg } from '../diagrams.js';
@@ -31,7 +32,7 @@ const TABS = [
 
 const frameState = new Map();
 function stateFor(f) {
-  if (!frameState.has(f.uid)) frameState.set(f.uid, { frameAlt: null, sigAlts: {}, mux: null, decodeHex: '', enc: null, encUnused: false });
+  if (!frameState.has(f.uid)) frameState.set(f.uid, { frameAlt: null, sigAlts: {}, mux: null, decodeHex: '', enc: null, encUnused: false, sel: null, routeSig: null });
   if (frameState.size > 200) frameState.delete(frameState.keys().next().value);
   return frameState.get(f.uid);
 }
@@ -85,6 +86,9 @@ export function renderFrameDetail(container, frameVersions, route) {
   const base = frameVersions.find((f) => f.source === srcId) || frameVersions[0];
   const st = stateFor(base);
   if (!st.mux) st.mux = defaultMux(base.signals);
+  // ?sig=NAME (search results, links) selects that signal once
+  if (route.query.sig && route.query.sig !== st.routeSig) st.sel = route.query.sig;
+  st.routeSig = route.query.sig || null;
   const tab = TABS.some((x) => x.id === route.query.tab) ? route.query.tab : 'grid';
   const { f, signals } = effective(base, st);
   const hues = hueMap(base.signals.concat(f.signals.filter((s) => !base.signals.some((b) => b.name === s.name))));
@@ -105,7 +109,7 @@ export function renderFrameDetail(container, frameVersions, route) {
     </div>` : '';
 
   const specifics = [];
-  if (f.type === 'can-tp' && f.isotp) specifics.push(html`<span>ISO-TP${f.isotp.flow_control_id !== undefined ? html`, flow control <code>0x${hex(f.isotp.flow_control_id, 3)}</code>` : ''}${f.isotp.addressing ? `, ${f.isotp.addressing} addressing` : ''}${f.isotp.padding !== undefined ? html`, padding ${f.isotp.padding === null ? 'none' : html`<code>0x${hex(f.isotp.padding, 2)}</code>`}` : ''}${f.isotp.functional ? ', functional' : ''}</span>`);
+  if (f.type === 'can-tp' && f.isotp) specifics.push(html`<span>ISO-TP${f.isotp.flow_control_id !== undefined && !(base.pairs || []).some((p) => p.partnerId === f.isotp.flow_control_id) ? html`, flow control <code>0x${hex(f.isotp.flow_control_id, 3)}</code>` : ''}${f.isotp.addressing ? `, ${f.isotp.addressing} addressing` : ''}${f.isotp.padding !== undefined ? html`, padding ${f.isotp.padding === null ? 'none' : html`<code>0x${hex(f.isotp.padding, 2)}</code>`}` : ''}${f.isotp.functional ? ', functional' : ''}</span>`);
   if (f.type === 'van' && f.van) specifics.push(html`<span>VAN ${f.van.access || ''}${f.van.ack ? ', ack requested (RAK)' : ''}${f.van.rtr ? ', RTR' : ''}${f.van.reply ? `, ${f.van.reply} reply` : ''}${f.van.requested_by ? `, requested by ${[].concat(f.van.requested_by).join(', ')}` : ''}</span>`);
   if (f.type === 'lin') specifics.push(html`<span>LIN${f.lin && f.lin.protected_id !== undefined ? html`, PID <code>0x${hex(f.lin.protected_id, 2)}</code>` : ''}${f.lin && f.lin.checksum ? `, ${f.lin.checksum} checksum` : ''}${f.lin && f.lin.master ? `, master ${f.lin.master}` : ''}</span>`);
   if (f.legacyMethod) specifics.push(html`<span class="muted">method: ${f.legacyMethod}</span>`);
@@ -135,6 +139,8 @@ export function renderFrameDetail(container, frameVersions, route) {
     <span><b>to</b> ${nodeList(f.archvar, f.receivers, 10)}</span>
     ${specifics}
   </div>
+  ${pairsBlock(base, route)}
+  ${familyBlock(base, route)}
   ${base.symlinkOf ? symlinkNotice(base) : base.identicalTo ? html`<div class="notice">≡ Same content as <a href="${frameRoute(base.identicalTo)}">${base.identicalTo.archvar} ${base.identicalTo.netbus} ${base.identicalTo.fileBase}</a> (identical file, probably a symbolic link).</div>` : ''}
   ${inheritNotice(base, route)}
   ${base.overrides ? overrideNotice(base, route) : ''}
@@ -169,14 +175,19 @@ function renderTab(tab, ctx) {
 
 // ---- Grid -----------------------------------------------------------------
 
-function renderGridTab({ f, signals, st, hues, route }) {
+/** Details panel content: the selected signal (pinned), else the hovered one. */
+function sideDetails(signals, name, pinned, archvar) {
+  const s = name ? signals.find((x) => x.name === name) : null;
+  return html`${pinned && s ? html`<div class="pinbar"><span class="muted small">Selected · click it again to release</span><button class="btn btn-sm" data-act="unselect" title="Release the selection">✕</button></div>` : ''}${signalDetails(s, archvar)}`;
+}
+
+function renderGridTab({ f, signals, st, hues }) {
   if (!signals.length) return emptyState('No signal documented', 'This frame has no signals yet (or only its ID is known).');
-  const sel = route.query.sig || null;
-  const selSig = sel ? signals.find((s) => s.name === sel) : null;
+  const sel = st.sel && signals.some((s) => s.name === st.sel) ? st.sel : null;
   return html`${muxControls(signals, st.mux)}
     <div class="gridpane">
       <div class="gridmain">${renderGrid(f, signals, { muxState: st.mux, hues, selected: sel })}</div>
-      <aside class="gridside" id="sigdetails">${signalDetails(selSig, f.archvar)}</aside>
+      <aside class="gridside${sel ? ' open' : ''}" id="sigdetails">${sideDetails(signals, sel, true, f.archvar)}</aside>
     </div>
     ${renderLegend(signals, hues, { muxState: st.mux })}`;
 }
@@ -185,7 +196,9 @@ function renderGridTab({ f, signals, st, hues, route }) {
 
 function renderSimpleTab({ f, signals, st, hues }) {
   if (!signals.length) return emptyState('No signal documented');
-  return html`${muxControls(signals, st.mux)}${renderSimpleView(f, signals, { muxState: st.mux, hues })}`;
+  // phones: 4 bytes per line instead of 8
+  const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches;
+  return html`${muxControls(signals, st.mux)}${renderSimpleView(f, signals, { muxState: st.mux, hues, lineBits: narrow ? 32 : 64 })}`;
 }
 
 // ---- Signals table --------------------------------------------------------
@@ -409,6 +422,63 @@ function renderCompareTab({ base, others }) {
   })}`;
 }
 
+// ---- ID pairs (diag request/response, ISO-TP flow control) and common frames ----
+
+function viewVariant(f, route) {
+  const via = route && route.query.via;
+  return via && app.db.variants.has(via) ? via : f.archvar;
+}
+
+function frameHref(o, archvar) {
+  const inh = app.db.inherited.get(archvar);
+  return `${frameRoute(o)}${inh && inh.has(o.uid) ? `?via=${encodeURIComponent(archvar)}` : ''}`;
+}
+
+function partnerLinks(f, id, archvar) {
+  const list = partnerFrames(app.db, f, id, archvar);
+  const idc = html`<code class="pair-id">0x${canIdText(id)}</code>`;
+  if (!list.length) return html`${idc} <span class="muted small">(no frame documented with this ID)</span>`;
+  return html`${list.slice(0, 3).map((o, i) => html`${i ? ', ' : ''}<a href="${frameHref(o, archvar)}">${idc} <span class="mono">${o.name}</span></a>${o.netbus !== f.netbus ? html` <span class="muted small">on ${o.netbus}</span>` : ''}`)}${list.length > 3 ? html` <span class="muted">+${list.length - 3}</span>` : ''}`;
+}
+
+const FROM_TEXT = { diag: 'diag/…/ecu.yml', nodes: 'nodes/ diag block', isotp: 'isotp.flow_control_id', standard: 'ISO 15765-4', name: 'guessed from the frame names' };
+
+function pairsBlock(f, route) {
+  const ps = f.pairs || [];
+  if (!ps.length) return '';
+  const av = viewVariant(f, route);
+  const rows = ps.map((p) => {
+    const src = html`<span class="muted small" title="where this pair comes from">${FROM_TEXT[p.from] || p.from}</span>`;
+    if (p.kind === 'isotp') {
+      return p.role === 'data'
+        ? html`<div class="pair"><span class="pair-k">ISO-TP</span><span>data on <code>0x${f.idHex}</code>, flow control from the receiver on ${partnerLinks(f, p.partnerId, av)} ${src}</span></div>`
+        : html`<div class="pair"><span class="pair-k">ISO-TP</span><span>flow control for the data frame ${partnerLinks(f, p.partnerId, av)} ${src}</span></div>`;
+    }
+    const nodes = p.nodes && p.nodes.length ? p.nodes : (p.role === 'response' ? f.senders : f.receivers).filter((n) => n !== 'DIAG_TOOL');
+    const ecu = nodes.length ? nodeList(av, nodes, 6) : html`<span class="muted">ECU?</span>`;
+    const proto = p.protocols && p.protocols.length ? html` <span class="badge">${p.protocols.join(' / ')}</span>` : '';
+    const func = p.functionalId !== null && p.functionalId !== undefined ? html` · functional requests on ${partnerLinks(f, p.functionalId, av)}` : '';
+    const tools = nodes.length === 1 && p.partnerId !== null && p.partnerId !== undefined
+      ? html` <a class="btn btn-sm" href="#/diag/request?${new URLSearchParams({ req: canIdText(p.role === 'response' ? p.partnerId : f.id), res: canIdText(p.role === 'response' ? f.id : p.partnerId), proto: (p.protocols || [])[0] || 'UDS' }).toString()}">request builder</a>${app.db.diag.ecus.has(`${av}/${nodes[0]}`) ? html` <a class="btn btn-sm" href="#/diag/ecu/${av}/${encodeURIComponent(nodes[0])}">diag data</a>` : ''}` : '';
+    let what;
+    if (p.role === 'response') what = html`<b>Response</b> ${ecu} → tester${p.partnerId !== null && p.partnerId !== undefined ? html` · answers the request on ${partnerLinks(f, p.partnerId, av)}` : ''}`;
+    else if (p.role === 'functional') what = html`<b>Functional request</b> tester → all ECUs${p.partnerId !== null && p.partnerId !== undefined ? html` · answered on ${partnerLinks(f, p.partnerId, av)}` : ''}`;
+    else what = html`<b>Request</b> tester → ${ecu}${p.partnerId !== null && p.partnerId !== undefined ? html` · answered on ${partnerLinks(f, p.partnerId, av)}` : html` · <span class="muted">response ID not documented</span>`}`;
+    return html`<div class="pair"><span class="pair-k">Diag${proto}</span><span>${what}${func} ${src}${tools}</span></div>`;
+  });
+  return html`<div class="pairs">${rows}</div>`;
+}
+
+function familyBlock(f, route) {
+  const fam = f.family && FAMILY_BY_ID.get(f.family);
+  if (!fam) return '';
+  const av = viewVariant(f, route);
+  const others = (app.db.familyFrames.get(`${av}|${fam.id}`) || []).filter((o) => o !== f);
+  return html`<details class="family"><summary><span class="badge badge-common fam-${fam.id}">${fam.label}</span> <b>Common frame</b> <span class="muted">— ${fam.title}.</span>${others.length ? html` <span class="muted">${others.length} other${others.length > 1 ? 's' : ''} in ${av}</span>` : ''}</summary>
+    ${others.length ? html`<div class="family-list">${others.slice(0, 200).map((o) => html`<a href="${frameHref(o, av)}" title="${o.senders.join(', ')} · ${o.netbus}"><code>${o.idHex}</code> <span class="mono">${o.name}</span> <span class="muted small">${o.netbus}</span></a>`)}</div>` : ''}
+  </details>`;
+}
+
 function symlinkNotice(f) {
   const tgt = app.db.framesByPath.get(`${f.source}|${f.symlinkOf}`);
   return html`<div class="notice">≡ Same as ${tgt ? html`<a href="${frameRoute(tgt)}">${tgt.archvar} ${tgt.netbus} ${tgt.fileBase}</a>` : html`<code>${f.symlinkOf}</code>`}: this file is a symbolic link, the frame is identical in both places.</div>`;
@@ -465,12 +535,35 @@ function bindDetail(container, ctx0) {
       location.hash = tabHref(base, 'encode', route);
     } else if (act === 'enc-to-dec') { st.decodeHex = el.dataset.hex; location.hash = tabHref(base, 'decode', route); }
     else if (act === 'enc-reset') { st.enc = null; rerender(); }
+    else if (act === 'unselect') { select(null); }
+  }));
+  // click a signal (grid cell, legend, simple view, table row) to select it until clicked again
+  const markSel = () => {
+    $$('.sel', container).forEach((x) => x.classList.remove('sel'));
+    if (st.sel) $$(`[data-sig="${CSS.escape(st.sel)}"]`, container).forEach((x) => x.classList.add('sel'));
+  };
+  const showDetails = (name) => {
+    const det = $('#sigdetails', container);
+    if (!det) return;
+    const c = ctx();
+    setHtml(det, sideDetails(c.signals, st.sel || name, !!st.sel, c.f.archvar));
+    det.classList.toggle('open', !!st.sel);
+  };
+  const select = (name) => {
+    st.sel = name;
+    markSel();
+    showDetails(name);
+  };
+  offs.push(on(container, 'click', '[data-sig]', (ev, el) => {
+    if (ev.target.closest('a, button, input, select, textarea, label')) return;
+    select(st.sel === el.dataset.sig ? null : el.dataset.sig);
   }));
   offs.push(on(container, 'change', '[data-act=enc-unused]', (ev, el) => { st.encUnused = el.checked; setHtml($('#enc-fields', container), encodeForm(ctx())); }));
   offs.push(on(container, 'change', 'select[data-mux]', (ev, el) => {
     st.mux[el.dataset.mux] = el.value === '' ? null : +el.value;
     const tb = $('#tabbody', container);
     setHtml(tb, renderTab(tab, { ...ctx(), route: app.route || route, others: [] }));
+    markSel();
   }));
   // hover highlight (grid, legend, tables)
   let lastSig = null;
@@ -480,8 +573,7 @@ function bindDetail(container, ctx0) {
     lastSig = name;
     $$('.hl', container).forEach((x) => x.classList.remove('hl'));
     $$(`[data-sig="${CSS.escape(name)}"]`, container).forEach((x) => x.classList.add('hl'));
-    const det = $('#sigdetails', container);
-    if (det) { const c = ctx(); setHtml(det, signalDetails(c.signals.find((s) => s.name === name), c.f.archvar)); }
+    if (!st.sel) showDetails(name);
   }));
   offs.push(on(container, 'mouseleave', '.bitgrid, .legend, .awp-structure, .awp-prose', () => {
     lastSig = null;
@@ -491,6 +583,7 @@ function bindDetail(container, ctx0) {
   offs.push(on(container, 'input', '#dec-input', (ev, el) => {
     st.decodeHex = el.value;
     setHtml($('#dec-out', container), decodeResults(ctx(), el.value));
+    markSel();
   }));
   // encode inputs
   const encUpdate = (el) => {
@@ -525,6 +618,7 @@ function bindDetail(container, ctx0) {
     setHtml($('#enc-out', container), encodeOutput(c));
   }));
   container._unbind = () => offs.forEach((o) => o());
+  markSel();
   if (route.query.sig && tab === 'grid') {
     const el = $(`.bitgrid [data-sig="${CSS.escape(route.query.sig)}"]`, container);
     if (el) el.scrollIntoView({ block: 'nearest' });

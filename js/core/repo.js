@@ -8,6 +8,7 @@ import {
   normalizeFrame, normalizeArchitectures, normalizeNode, normalizeCar, normalizeSignals, normalizeValues, parseRawKey,
 } from './normalize.js';
 import { isObj, toMl, asArray, parseIntLoose, naturalCompare, ml, hex } from './util.js';
+import { annotateRelations } from './relations.js';
 
 /** Pseudo nodes used in senders/receivers that are not real ECUs. */
 export const PSEUDO_NODES = {
@@ -503,6 +504,9 @@ export function buildDatabase(sources) {
     }
   }
   db.cars.sort((a, b) => naturalCompare(a.project, b.project));
+
+  // 7. diagnostic / ISO-TP ID pairs, common frame families
+  annotateRelations(db);
 
   db.variantList = [...db.variants.values()].sort((a, b) => naturalCompare(a.arch, b.arch) || (a.variant === 'full' ? -1 : b.variant === 'full' ? 1 : naturalCompare(a.variant, b.variant)));
   db.searchIndex = buildSearchIndex(db);

@@ -8,12 +8,16 @@ import { esc, naturalCompare } from '../../core/util.js';
 import { VList } from '../vlist.js';
 import { frameBadges, periodText, variantOptions, defaultVariant, t, emptyState, busLabel } from '../widgets.js';
 import { renderFrameDetail } from './frame.js';
+import { FAMILIES } from '../../core/relations.js';
 
-const DEFAULT_FILTERS = { archvar: '', buses: [], ecu: '', ecuMode: 'both', q: '', inSignals: false, types: [], timing: 'all', conflicts: false, warnings: false, source: '', sort: 'id', dir: 1 };
+const DEFAULT_FILTERS = { archvar: '', buses: [], ecu: '', ecuMode: 'both', q: '', inSignals: false, types: [], timing: 'all', conflicts: false, warnings: false, source: '', common: 'all', sort: 'id', dir: 1 };
 let filt = { ...DEFAULT_FILTERS, ...(store.get('frameFilters', {}) || {}) };
 let vlist = null;
 let mounted = null; // {root, db}
 let listItems = [];
+let lastDetailKey = null;
+let scrollTopPending = false;
+let filtersOpen = false;
 
 function saveFilters() { store.set('frameFilters', filt); }
 
@@ -43,6 +47,9 @@ export function filterFrames(frames) {
     if (filt.conflicts && !f.hasAlternatives) return false;
     if (filt.warnings && !f.warnCount) return false;
     if (filt.source && !(f.sources || [f.source]).includes(filt.source)) return false;
+    if (filt.common === 'hide' && f.family) return false;
+    if (filt.common === 'only' && !f.family) return false;
+    if (filt.common && !['all', 'hide', 'only'].includes(filt.common) && f.family !== filt.common) return false;
     if (ecu) {
       const s = f.senders.some((n) => n.toUpperCase() === ecu);
       const r = f.receivers.some((n) => n.toUpperCase() === ecu);
@@ -118,6 +125,9 @@ function sidebarHtml() {
     <div class="fgroup"><div class="fgroup-h"><span>Timing</span></div>
       <select id="f-timing">${[['all', 'all'], ['periodic', 'periodic'], ['event', 'event only'], ['request', 'on request']].map(([k, l]) => html`<option value="${k}" ${filt.timing === k ? 'selected' : ''}>${l}</option>`)}</select>
     </div>
+    <div class="fgroup"><div class="fgroup-h"><span>Common frames</span></div>
+      <select id="f-common" title="Generic frames sent by many ECUs with the same layout (version, supervision, diagnostics…)">${[['all', 'show'], ['hide', 'hide common frames'], ['only', 'only common frames'], ...FAMILIES.filter((fa) => frames.some((f) => f.family === fa.id)).map((fa) => [fa.id, `only: ${fa.label} (${frames.filter((f) => f.family === fa.id).length})`])].map(([k, l]) => html`<option value="${k}" ${(filt.common || 'all') === k ? 'selected' : ''}>${l}</option>`)}</select>
+    </div>
     <div class="fgroup"><div class="fgroup-h"><span>Data</span></div>
       <label class="chk"><input type="checkbox" id="f-conf" ${filt.conflicts ? 'checked' : ''}> has alternatives (conflicts)</label>
       <label class="chk"><input type="checkbox" id="f-warn" ${filt.warnings ? 'checked' : ''}> has data warnings</label>
@@ -129,9 +139,24 @@ function sidebarHtml() {
 
 function listHeader(count, total) {
   const col = (k, label, cls) => html`<span class="${cls} sortable${filt.sort === k ? ' sorted' : ''}" data-sort="${k}">${label}${filt.sort === k ? (filt.dir > 0 ? ' ▲' : ' ▼') : ''}</span>`;
-  return html`<div class="flist-top"><span><b>${count}</b> <span class="muted">/ ${total} frames</span></span><span class="spacer"></span>
+  const nf = activeFilterCount();
+  return html`<div class="flist-top"><button class="btn btn-sm filters-toggle${filtersOpen ? ' active' : ''}" data-act="toggle-filters" aria-expanded="${filtersOpen ? 'true' : 'false'}">Filters${nf ? html` <span class="count">${nf}</span>` : ''}</button><span><b>${count}</b> <span class="muted">/ ${total} frames</span></span><span class="spacer"></span>
     <a class="btn btn-sm" href="#/tools/export?arch=${encodeURIComponent(filt.archvar)}" title="DBC / JSON export of this architecture">Export…</a></div>
     <div class="frow fhead">${col('id', 'ID', 'c-id')}${col('name', 'Name', 'c-name')}${col('bus', 'Bus', 'c-bus')}${col('len', 'Len', 'c-len')}${col('period', 'Period', 'c-per')}<span class="c-nodes">Senders → receivers</span><span class="c-badges"></span></div>`;
+}
+
+function activeFilterCount() {
+  let n = 0;
+  if (filt.q.trim()) n++;
+  if (filt.buses.length) n++;
+  if (filt.ecu.trim()) n++;
+  if (filt.types.length) n++;
+  if (filt.timing !== 'all') n++;
+  if (filt.conflicts) n++;
+  if (filt.warnings) n++;
+  if (filt.source) n++;
+  if (filt.common && filt.common !== 'all') n++;
+  return n;
 }
 
 function refreshList(root) {
@@ -185,13 +210,32 @@ function bindSidebar(root) {
   on(side, 'change', '#f-conf', (ev, el) => { filt.conflicts = el.checked; upd(); });
   on(side, 'change', '#f-warn', (ev, el) => { filt.warnings = el.checked; upd(); });
   on(side, 'change', '#f-src', (ev, el) => { filt.source = el.value; upd(); });
+  on(side, 'change', '#f-common', (ev, el) => { filt.common = el.value; upd(); });
   on(side, 'click', '[data-act=bus-all]', (ev) => { ev.preventDefault(); filt.buses = []; saveFilters(); setHtml(side, sidebarHtml()); refreshList(root); });
   on(side, 'click', '[data-act=reset-filters]', () => { const a = filt.archvar; filt = { ...DEFAULT_FILTERS, archvar: a }; saveFilters(); setHtml(side, sidebarHtml()); refreshList(root); });
+  on($('#flist-head', root), 'click', '[data-act=toggle-filters]', () => {
+    filtersOpen = !filtersOpen;
+    const lay = $('.frames-layout', root);
+    if (lay) lay.classList.toggle('show-filters', filtersOpen);
+    refreshList(root);
+  });
+  // a click on a frame always shows its grid from the top, even when it is already the current frame
+  on($('#flist-body', root), 'click', 'a.frow', (ev, el) => {
+    scrollTopPending = true;
+    if (el.getAttribute('href') === location.hash) { ev.preventDefault(); scrollDetailTop(root); scrollTopPending = false; }
+  });
   on($('#flist-head', root), 'click', '[data-sort]', (ev, el) => {
     const k = el.dataset.sort;
     if (filt.sort === k) filt.dir = -(filt.dir || 1); else { filt.sort = k; filt.dir = 1; }
     upd();
   });
+}
+
+function scrollDetailTop(root) {
+  const det = $('#fdetail', root);
+  if (det) det.scrollTop = 0;
+  // narrow layouts scroll the page itself
+  if (window.scrollY > 0) window.scrollTo(0, 0);
 }
 
 /** Router entry: #/frames[/ARCHVAR[/NETBUS/FILE]]?query */
@@ -218,7 +262,7 @@ export function renderFrames(root, route) {
   const hasDetail = !!(archvar && netbus && file);
   if (needFull) {
     if (vlist) { vlist.destroy(); vlist = null; }
-    setHtml(root, html`<div class="frames-layout${hasDetail ? ' has-detail' : ''}">
+    setHtml(root, html`<div class="frames-layout${hasDetail ? ' has-detail' : ''}${filtersOpen ? ' show-filters' : ''}">
       <aside class="sidebar" id="fsidebar">${sidebarHtml()}</aside>
       <section class="flist"><div id="flist-head"></div><div class="flist-body" id="flist-body"></div></section>
       <section class="fdetail" id="fdetail"></section>
@@ -238,10 +282,14 @@ export function renderFrames(root, route) {
       setHtml(det, emptyState('Frame not found', `No frame ${key} in the loaded sources.`));
     } else {
       renderFrameDetail(det, versions, route);
+      if (key !== lastDetailKey || scrollTopPending) scrollDetailTop(root);
+      lastDetailKey = key;
+      scrollTopPending = false;
       const i = selectedIndex();
       if (vlist && i >= 0) vlist.scrollToIndex(i);
     }
   } else {
+    lastDetailKey = null;
     setHtml(det, html`<div class="fdetail-placeholder">
       <h3>Select a frame</h3>
       <p class="muted">Pick a frame in the list to see its bit layout, decode or encode payloads and generate code.</p>

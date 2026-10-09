@@ -31,34 +31,36 @@ export function renderSimpleView(frame, signals, opts = {}) {
   });
   const letters = new Map(act.map((s, i) => [s.name, letterFor(i)]));
   const lines = [];
-  for (let line = 0; line * 64 < nbits; line++) {
-    const lo = line * 64;
-    const hi = Math.min(nbits, lo + 64) - 1;
+  const lineBits = opts.lineBits || 64;
+  for (let line = 0; line * lineBits < nbits; line++) {
+    const lo = line * lineBits;
+    const hi = Math.min(nbits, lo + lineBits) - 1;
     const groups = [];
     let i = lo;
     while (i <= hi) {
       const o = owner[i];
       let e = i;
       while (e + 1 <= hi && owner[e + 1] === o) e++;
-      let txt = '';
+      // byte separators are kept apart so that they are not drawn with the signal color
+      const parts = [''];
       for (let b = i; b <= e; b++) {
-        if (b !== lo && b % 8 === 0) txt += ' ';
-        if (o < 0) txt += '·';
-        else txt += act[o].unused ? '-' : letters.get(act[o].name);
+        if (b !== lo && b % 8 === 0) parts.push(' ', '');
+        parts[parts.length - 1] += o < 0 ? '·' : act[o].unused ? '-' : letters.get(act[o].name);
       }
-      groups.push({ o, txt, start: i, first: o >= 0 && ranges[o].start === i });
+      groups.push({ o, parts: parts.filter((x) => x !== ''), start: i, first: o >= 0 && ranges[o].start === i });
       i = e + 1;
     }
     const callouts = groups.filter((g) => g.first && !act[g.o].unused);
     const n = callouts.length;
     let k = 0;
     const html1 = groups.map((g) => {
-      if (g.o < 0 || !g.first || act[g.o].unused) return html`<span class="awp-bits${g.o >= 0 ? ' awp-unused' : ' awp-free'}">${g.txt}</span>`;
+      if (g.o < 0 || !g.first || act[g.o].unused) return html`<span class="awp-bits${g.o >= 0 ? ' awp-unused' : ' awp-free'}">${g.parts.join('')}</span>`;
       const s = act[g.o];
       const off = n - 1 - k++;
-      return html`<span class="awp-bits awp-sig" data-sig="${s.name}"><span class="awp-letters" style="--h:${opts.hues ? opts.hues.get(s.name) : 200}">${g.txt}</span><span class="awp-info" style="padding-top:${off * 22 + 6}px">${letters.get(s.name)}: ${s.name}${s.comment ? html` <span class="muted">— ${t(s.comment)}</span>` : ''}</span></span>`;
+      const hue = opts.hues ? opts.hues.get(s.name) : 200;
+      return html`<span class="awp-bits awp-sig" data-sig="${s.name}">${g.parts.map((p) => (p === ' ' ? ' ' : html`<span class="awp-letters" style="--h:${hue}">${p}</span>`))}<span class="awp-info" style="padding-top:${off * 22 + 6}px">${letters.get(s.name)}: ${s.name}${s.comment ? html` <span class="muted">— ${t(s.comment)}</span>` : ''}</span></span>`;
     });
-    lines.push(html`<div class="awp-line"><div class="awp-off mono">${line * 8 + 1}</div><div class="awp-structure" style="padding-bottom:${n * 22 + 34}px">${html1}</div></div>`);
+    lines.push(html`<div class="awp-line"><div class="awp-off mono">${line * (lineBits / 8) + 1}</div><div class="awp-structure" style="padding-bottom:${n * 22 + 34}px">${html1}</div></div>`);
   }
   const truncated = layoutLength(frame, act, null) > L;
   const fr = lang() === 'fr';

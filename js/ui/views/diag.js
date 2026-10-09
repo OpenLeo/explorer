@@ -10,7 +10,7 @@ import { renderGrid, renderLegend, hueMap } from '../bitgrid.js';
 import { UDS_SERVICES, KWP_SERVICES, OBD_SERVICES, NRC, UDS_SESSIONS, COMMON_DIDS, describeMessage } from '../../core/diagref.js';
 import { segment, flowControl, describeStMin } from '../../core/isotp.js';
 import { computeKey, ALGORITHM_DESCRIPTION } from '../../core/seedkey.js';
-import { dtcToRaw, rawToDtc } from '../../core/repo.js';
+import { dtcToRaw, rawToDtc, frameRoute } from '../../core/repo.js';
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -23,7 +23,15 @@ const arr = (v) => (Array.isArray(v) ? v : v === null || v === undefined ? [] : 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
 function hx(v, w = 2) { return isNum(v) ? hex(v, w) : ''; }
 function canIdHex(id) { return isNum(id) ? (id > 0x7FF ? hex(id, 8) : hex(id, 3)) : ''; }
-function idCell(v) { return isNum(v) ? html`<code>0x${canIdHex(v)}</code>` : html`<span class="muted">—</span>`; }
+/** CAN ID cell, linked to the frame documented with that ID in the variant (same bus first). */
+function idCell(v, archvar, bus) {
+  if (!isNum(v)) return html`<span class="muted">—</span>`;
+  const frames = archvar && app.db ? (app.db.variantFrames.get(archvar) || []).filter((f) => f.id === v && (f.type === 'can' || f.type === 'can-tp')) : [];
+  frames.sort((a, b) => (bus && (a.netbus === bus || a.bus === bus) ? 0 : 1) - (bus && (b.netbus === bus || b.bus === bus) ? 0 : 1));
+  if (!frames.length) return html`<code>0x${canIdHex(v)}</code>`;
+  const f = frames[0];
+  return html`<a href="${frameRoute(f)}" title="${f.name} · ${f.netbus}${frames.length > 1 ? ` (+${frames.length - 1} other frame${frames.length > 2 ? 's' : ''} with this ID)` : ''}"><code>0x${canIdHex(v)}</code></a>`;
+}
 function parseCanId(s) {
   const m = /^\s*(?:0x)?([0-9a-f]{1,8})\s*$/i.exec(String(s ?? ''));
   return m ? parseInt(m[1], 16) : null;
@@ -227,12 +235,12 @@ function addressingTable(db, q, archvar) {
     return `${r.node} ${r.archvar} ${r.bus} ${r.protocols.join(' ')} ${canIdHex(r.req)} ${canIdHex(r.res)} ${hx(r.kline)}`.toLowerCase().includes(qq);
   });
   if (!rows.length) return emptyState('No addressing information', 'No node has a diag block (nodes/*.yml) and no diag/*/*/ecu.yml defines addressing for this selection.');
-  return html`<div class="tablewrap"><table class="tbl"><thead><tr><th>Architecture</th><th>ECU</th><th>Protocols</th><th>Transport</th><th>Bus</th><th>Request ID</th><th>Response ID</th><th>Functional</th><th>K-line addr.</th><th>OBD req/resp</th><th>From</th><th></th></tr></thead><tbody>
+  return html`<div class="tablewrap"><table class="tbl"><thead><tr><th>Architecture</th><th>ECU</th><th>Request ID</th><th>Response ID</th><th>Functional</th><th>Protocols</th><th>Transport</th><th>Bus</th><th>K-line addr.</th><th>OBD req/resp</th><th>From</th><th></th></tr></thead><tbody>
     ${rows.map((r) => html`<tr>
       <td>${r.archvar}</td>
       <td>${nodeLink(r.archvar, r.node)}${dg.ecus.has(`${r.archvar}/${r.node}`) ? html` <a class="badge" href="${ecuDiagHref(r.archvar, r.node)}">diag data</a>` : ''}</td>
+      <td>${idCell(r.req, r.archvar, r.bus)}</td><td>${idCell(r.res, r.archvar, r.bus)}</td><td>${idCell(r.func, r.archvar, r.bus)}</td>
       <td>${r.protocols.join(', ')}</td><td>${r.transport}</td><td class="mono">${r.bus}</td>
-      <td>${idCell(r.req)}</td><td>${idCell(r.res)}</td><td>${idCell(r.func)}</td>
       <td>${isNum(r.kline) ? html`<code>0x${hx(r.kline, 2)}</code>` : ''}</td>
       <td class="small">${isNum(r.obdReq) || isNum(r.obdRes) ? html`<code>${canIdHex(r.obdReq)}</code> / <code>${canIdHex(r.obdRes)}</code>` : ''}</td>
       <td class="small">${r.from === 'diag' ? 'diag/ecu.yml' : 'nodes/'} ${sourceBadge(r.source)}</td>
@@ -394,7 +402,7 @@ function renderEcu(db, archvar, node, route) {
         ${kv([['Protocols', protos.join(', ')], ['Tester present', ecu.testerPresent ? html`<code>${ecu.testerPresent.request || '3E 00'}</code>${isNum(ecu.testerPresent.period) ? ` every ${ecu.testerPresent.period} ms` : ''}` : null]])}
         <h4>Addressing</h4>
         ${addr.length ? html`<table class="tbl compact"><thead><tr><th>Transport</th><th>Bus</th><th>Request</th><th>Response</th><th>Functional</th><th>K-line</th><th></th></tr></thead><tbody>
-          ${addr.map((r) => html`<tr><td>${r.transport}</td><td class="mono">${r.bus}</td><td>${idCell(r.req)}</td><td>${idCell(r.res)}</td><td>${idCell(r.func)}</td><td>${isNum(r.kline) ? html`<code>0x${hx(r.kline, 2)}</code>` : ''}</td>
+          ${addr.map((r) => html`<tr><td>${r.transport}</td><td class="mono">${r.bus}</td><td>${idCell(r.req, r.archvar, r.bus)}</td><td>${idCell(r.res, r.archvar, r.bus)}</td><td>${idCell(r.func, r.archvar, r.bus)}</td><td>${isNum(r.kline) ? html`<code>0x${hx(r.kline, 2)}</code>` : ''}</td>
             <td>${isNum(r.req) ? html`<a class="btn btn-sm" href="#/diag/request?req=${canIdHex(r.req)}&res=${canIdHex(r.res)}&proto=${encodeURIComponent(protos[0] || 'UDS')}">request builder</a>` : ''}</td></tr>`)}</tbody></table>` : html`<p class="muted">No addressing documented.</p>`}
         ${arr(ecu.sessions).length ? html`<h4>Sessions</h4><table class="tbl compact"><tbody>${arr(ecu.sessions).map((s) => html`<tr><td class="mono">10 ${hx(s.raw, 2)}</td><td>${t(s.text) || UDS_SESSIONS[s.raw] || ''}</td></tr>`)}</tbody></table>` : ''}
         ${arr(ecu.resets).length ? html`<h4>Resets</h4><table class="tbl compact"><tbody>${arr(ecu.resets).map((s) => html`<tr><td class="mono">11 ${hx(s.raw, 2)}</td><td>${t(s.text)}</td></tr>`)}</tbody></table>` : ''}

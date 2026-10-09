@@ -3,6 +3,7 @@
 import { html, raw } from './dom.js';
 import { ml, hex, fmtNum } from '../core/util.js';
 import { frameRoute } from '../core/repo.js';
+import { FAMILY_BY_ID } from '../core/relations.js';
 import { app, lang, sourceMetaById } from './state.js';
 
 // ---- text blobs for copy / download buttons ----
@@ -55,12 +56,44 @@ export function linkTargetLabel(f) {
   return m ? `${m[1]} ${m[2]} ${m[3]}` : f.symlinkOf;
 }
 
+/** CAN ID of a partner frame, written like the frame IDs (3 or 8 hex digits). */
+export function canIdText(id) { return id === null || id === undefined ? '?' : hex(id, id > 0x7FF ? 8 : 3); }
+
+const ROLE_TEXT = { request: 'Diagnostic request', functional: 'Functional diagnostic request (broadcast)', response: 'Diagnostic response' };
+
+/** One-line description of an ID pair (used in titles). */
+export function pairTitle(p) {
+  if (p.kind === 'isotp') return p.role === 'data' ? `ISO-TP data frame, flow control on 0x${canIdText(p.partnerId)}` : `ISO-TP flow control of the data frame 0x${canIdText(p.partnerId)}`;
+  const who = p.nodes && p.nodes.length ? ` (${p.nodes.join(', ')})` : '';
+  const proto = p.protocols && p.protocols.length ? ` ${p.protocols.join('/')}` : '';
+  if (p.partnerId === null || p.partnerId === undefined) return `${ROLE_TEXT[p.role] || 'Diagnostic frame'}${proto}${who}`;
+  return `${ROLE_TEXT[p.role] || 'Diagnostic frame'}${proto}${who}, ${p.role === 'response' ? 'request on' : 'response on'} 0x${canIdText(p.partnerId)}${p.from === 'name' ? ' (guessed from the frame names)' : ''}`;
+}
+
+export function pairBadges(f) {
+  const ps = f.pairs || [];
+  if (!ps.length) return '';
+  return html`${ps.slice(0, 2).map((p) => {
+    let label;
+    if (p.kind === 'isotp') label = p.role === 'data' ? `FC ${canIdText(p.partnerId)}` : `FC of ${canIdText(p.partnerId)}`;
+    else if (p.partnerId === null || p.partnerId === undefined) label = p.role === 'functional' ? 'func. req' : p.role === 'response' ? 'diag resp' : 'diag req';
+    else label = p.role === 'response' ? `← ${canIdText(p.partnerId)}` : `→ ${canIdText(p.partnerId)}`;
+    return html`<span class="badge badge-pair${p.from === 'name' ? ' guessed' : ''}" title="${pairTitle(p)}">${label}</span>`;
+  })}`;
+}
+
+export function familyBadge(f) {
+  const fam = f.family && FAMILY_BY_ID.get(f.family);
+  if (!fam) return '';
+  return html`<span class="badge badge-common fam-${fam.id}" title="Common frame: ${fam.title}">${fam.label}</span>`;
+}
+
 export function frameBadges(f, opts = {}) {
   const inh = opts.inherited ? html`<span class="badge badge-inh" title="Not redefined in this variant: inherited from ${f.archvar}">↑ ${f.variant}</span>` : '';
   const ovr = f.overrides ? (f.overrideDiff && f.overrideDiff.identical
     ? html`<span class="badge" title="Redefined identically to ${f.overrides.archvar}">= parent</span>`
     : html`<span class="badge badge-chg" title="Changed in this variant compared to ${f.overrides.archvar}">changed</span>`) : '';
-  return html`${(f.sources || []).length > 1 ? html`<span class="badge badge-multi" title="Defined in ${f.sources.length} sources: ${f.sources.join(', ')}">${f.sources.length} src</span>` : (opts.compact && app.db && app.db.sources[0] && app.db.sources[0].id === f.source) ? '' : sourceBadge(f.source)}${f.hasAlternatives ? html`<span class="badge badge-alt" title="Has conflicting observations (alternatives)">alt</span>` : ''}${f.hasMux ? html`<span class="badge" title="Multiplexed signals">mux</span>` : ''}${f.symlinkOf ? html`<span class="badge badge-link" title="Same as ${linkTargetLabel(f)} (symbolic link)">≡ ${linkTargetLabel(f).split(' ')[0]}</span>` : f.identicalTo ? html`<span class="badge badge-link" title="Same content as ${f.identicalTo.archvar} ${f.identicalTo.netbus} ${f.identicalTo.fileBase}">≡ ${f.identicalTo.archvar}</span>` : ''}${inh}${ovr}${warnBadge(f)}`;
+  return html`${familyBadge(f)}${pairBadges(f)}${(f.sources || []).length > 1 ? html`<span class="badge badge-multi" title="Defined in ${f.sources.length} sources: ${f.sources.join(', ')}">${f.sources.length} src</span>` : (opts.compact && app.db && app.db.sources[0] && app.db.sources[0].id === f.source) ? '' : sourceBadge(f.source)}${f.hasAlternatives ? html`<span class="badge badge-alt" title="Has conflicting observations (alternatives)">alt</span>` : ''}${f.hasMux ? html`<span class="badge" title="Multiplexed signals">mux</span>` : ''}${f.symlinkOf ? html`<span class="badge badge-link" title="Same as ${linkTargetLabel(f)} (symbolic link)">≡ ${linkTargetLabel(f).split(' ')[0]}</span>` : f.identicalTo ? html`<span class="badge badge-link" title="Same content as ${f.identicalTo.archvar} ${f.identicalTo.netbus} ${f.identicalTo.fileBase}">≡ ${f.identicalTo.archvar}</span>` : ''}${inh}${ovr}${warnBadge(f)}`;
 }
 
 export function frameLink(f, label) {

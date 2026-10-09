@@ -100,7 +100,7 @@ export function renderGrid(frame, signals, opts = {}) {
         const isFirst = rg.start >= abs && rg.start <= r * 8 + e;
         const flags = opts.flags && opts.flags[s.name] ? opts.flags[s.name] : [];
         const bad = flags.some((f) => ['invalid', 'below-min', 'above-max', 'unknown-value', 'truncated'].includes(f));
-        const cls = `seg sig${s.unused ? ' unused' : ''}${isFirst ? ' msb' : ' cont'}${hasLsb ? ' lsb' : ''}${bad ? ' flagged' : ''}${opts.selected === s.name ? ' hl' : ''}`;
+        const cls = `seg sig${s.unused ? ' unused' : ''}${isFirst ? ' msb' : ' cont'}${hasLsb ? ' lsb' : ''}${bad ? ' flagged' : ''}${opts.selected === s.name ? ' sel' : ''}`;
         const p = absToByteBit(rg.start);
         const q = absToByteBit(Math.min(rg.end, nbits - 1));
         const title = `${s.name} (${s.pos.toEnd ? s.bits : `${p.byte}.${p.bit}-${q.byte}.${q.bit}`}, ${rg.width} bit${rg.width > 1 ? 's' : ''})${s.comment ? ' — ' + t(s.comment) : ''}`;
@@ -143,9 +143,9 @@ export function renderLegend(signals, hues, opts = {}) {
   </div>`)}</div>`;
 }
 
-/** Details panel of a signal (shown on hover). */
+/** Details panel of a signal (hovered or selected). */
 export function signalDetails(s, archvar) {
-  if (!s) return html`<p class="muted">Hover a signal to see its details.</p>`;
+  if (!s) return html`<p class="muted">Hover a signal to see its details, click it to keep it selected.</p>`;
   const rows = [];
   rows.push(['Bits', html`<code>${s.bits}</code>${s.pos ? html` <span class="muted">(${s.pos.toEnd ? 'variable length' : s.width + ' bit' + (s.width > 1 ? 's' : '')})</span>` : ''}`]);
   rows.push(['Type', s.type + (s.typeExplicit ? '' : ' (inferred)')]);
