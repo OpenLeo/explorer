@@ -492,10 +492,16 @@ export function parseDtcQuery(q) {
   return null;
 }
 
-function dtcTable(list) {
+/** label of a failure type byte for a DTC (its own failure types, or the ones shared by its table) */
+function failureLabel(d, ft) {
+  const v = arr(d.failureTypes).find((x) => x.raw === ft && !x.unused);
+  return v ? t(v.text) : '';
+}
+
+function dtcTable(list, ft = null) {
   return html`<div class="tablewrap"><table class="tbl"><thead><tr><th>Code</th><th>Raw</th><th>ECU</th><th>Architecture</th><th>Description</th><th>Comment / clues</th></tr></thead><tbody>
     ${list.map((d) => html`<tr><td class="mono"><b>${d.code}</b></td><td class="mono">${isNum(d.raw) ? `0x${hex(d.raw, 4)}` : ''}</td>
-      <td><a href="${ecuDiagHref(d.archvar, ecuRef(d))}">${d.node}${d.model ? ` ${d.model}` : ''}</a></td><td>${d.archvar}</td><td>${t(d.displayName)}${arr(d.variants).length ? html`<div class="small muted">${arr(d.variants).join(', ')}</div>` : ''}</td>
+      <td><a href="${ecuDiagHref(d.archvar, ecuRef(d))}">${d.node}${d.model ? ` ${d.model}` : ''}</a></td><td>${d.archvar}</td><td>${t(d.displayName)}${ft !== null && failureLabel(d, ft) ? html`<div class="small">Failure type 0x${hex(ft, 2)}: ${failureLabel(d, ft)}</div>` : ''}${arr(d.variants).length ? html`<div class="small muted">${arr(d.variants).join(', ')}</div>` : ''}</td>
       <td class="small">${t(d.comment)}${d.clues ? html`<div class="muted">${t(d.clues)}</div>` : ''}</td></tr>`)}
   </tbody></table></div>`;
 }
@@ -523,7 +529,7 @@ function dtcResults(db, q) {
   const shown = matches.slice(0, 500);
   return html`${head}
     ${!idx.length ? html`<div class="notice">No DTC documented in the loaded sources (diag/*/*/dtcs.yml).</div>` : ''}
-    ${idx.length ? (shown.length ? html`<p class="muted">${matches.length} matching DTC(s)${matches.length > shown.length ? `, first ${shown.length} shown` : ''}.</p>${dtcTable(shown)}` : html`<p class="muted">No documented DTC matches.</p>`) : ''}`;
+    ${idx.length ? (shown.length ? html`<p class="muted">${matches.length} matching DTC(s)${matches.length > shown.length ? `, first ${shown.length} shown` : ''}.</p>${dtcTable(shown, p ? p.failureType : null)}` : html`<p class="muted">No documented DTC matches.</p>`) : ''}`;
 }
 
 function renderDtcPage(db, route) {

@@ -360,12 +360,16 @@ export function buildDatabase(sources) {
         const e = db.diag.ecus.get(k);
         if (c.kind === 'diag_ecu') { if (!e.ecu) e.ecu = normalizeDiagEcu(f.data); }
         else if (c.kind === 'diag_dtcs') {
+          // 'failure_types' at the top: shared by the codes that have none of their own ({} = no failure type)
+          const shared = normalizeValues(f.data.failure_types, [], '');
           for (const [code, v] of Object.entries(f.data)) {
+            if (code === 'failure_types') continue;
             const vd = isObj(v) ? v : { display_name: v };
             const r = dtcToRaw(code);
             const dtc = {
               code, raw: vd.raw ? parseInt(String(vd.raw), 16) : (r ? r.raw : null), displayName: toMl(vd.display_name),
               comment: toMl(vd.comment), clues: toMl(vd.clues), variants: asArray(vd.variants).map(String),
+              failureTypes: vd.failure_types !== undefined && vd.failure_types !== null ? normalizeValues(vd.failure_types, [], '') : shared,
               archvar: c.archvar, node: c.node, model: c.model || null, source: sid,
             };
             e.dtcs.push(dtc);

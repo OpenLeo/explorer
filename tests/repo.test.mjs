@@ -126,17 +126,18 @@ test('real PSA-RE repository loads without crashing', { skip: !exists(PSA_RE) &&
     assert.ok(Array.isArray(f.periodicity));
     for (const s of f.signals) assert.equal(typeof s.name, 'string');
   }
-  // legacy AEE2001 bus directory mapped to the declared VAN bus
-  const van = db.frames.filter((f) => f.arch === 'AEE2001');
+  // AEE2001: VAN frames on the VAN buses (and CAN frames on HS.IS), every bus declared
+  const aee2001 = db.frames.filter((f) => f.arch === 'AEE2001');
+  const van = aee2001.filter((f) => f.netbus.startsWith('VAN.'));
   assert.ok(van.length > 0);
-  assert.ok(van.every((f) => f.type === 'van'), 'AEE2001 CONF frames are VAN');
-  assert.ok(van.every((f) => f.archvar === 'AEE2001.full'));
-  assert.ok(van.every((f) => !f.netbus.startsWith('?')), van.map((f) => f.netbus).join(','));
+  assert.ok(van.every((f) => f.type === 'van'), 'AEE2001 VAN bus frames are VAN');
+  assert.ok(aee2001.every((f) => f.archvar === 'AEE2001.full'));
+  assert.ok(aee2001.every((f) => !f.netbus.startsWith('?')), aee2001.map((f) => f.netbus).join(','));
   // well-known frame
   const f036 = db.frames.find((f) => f.archvar === 'AEE2004.full' && f.id === 0x036);
   assert.ok(f036 && f036.signals.length > 10);
   assert.ok(search(db, '036').some((r) => r.frame === f036));
-  assert.ok(ms < 3000, `db build took ${ms} ms`);
+  assert.ok(ms < 10000, `db build took ${ms} ms`);   // ~3000 frames and ~21000 diag files
 });
 
 

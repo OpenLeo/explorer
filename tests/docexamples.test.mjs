@@ -55,6 +55,10 @@ test('dbmuxev/doc diag examples load into the database', { skip: !exists(DOC) &&
   assert.ok(e.dids.length === 1 && e.dids[0].params.length > 0);
   assert.ok(e.lids.length === 1);
   assert.ok(e.dtcs.length > 0);
+  assert.ok(!e.dtcs.some((d) => d.code === 'failure_types'), 'the shared failure_types is not a code');
+  const byCode = Object.fromEntries(e.dtcs.map((d) => [d.code, d]));
+  if (byCode.P0001) assert.deepEqual(byCode.P0001.failureTypes.map((x) => x.raw), [0x12]);   // its own
+  if (byCode['B1003-00']) assert.deepEqual(byCode['B1003-00'].failureTypes, []);                // {}: none
   assert.ok(e.routines.length === 1);
   assert.ok(e.ioctls.length === 1);
   assert.ok(db.diag.protocols.size === 1);
