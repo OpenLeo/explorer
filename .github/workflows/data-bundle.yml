@@ -1,11 +1,15 @@
 # Data bundles of the default sources (tools/make_bundle.mjs), published on the 'data' branch (one commit, replaced
 # at every update) and read by the explorer from raw.githubusercontent.com. A bundle older than its repository is
 # still used: the explorer downloads the files changed since one by one.
+# Built on each push to PSA-RE (its workflow sends a 'psa-re-push' repository_dispatch), and every hour in case a
+# dispatch was missed.
 name: data bundle
 
 on:
+  repository_dispatch:
+    types: [psa-re-push]
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
   push:
     branches: [main]

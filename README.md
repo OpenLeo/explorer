@@ -128,8 +128,10 @@ Loading is kept short:
   (status bar: "loading diagnostics…"), so the global search finds diagnostic identifiers too.
 * **Data bundles**: the parsed files of a repository in two gzipped JSON files (`core` at start-up, `diag` when
   needed), published by the `data bundle` workflow of this repository on its `data` branch and read from
-  `raw.githubusercontent.com/OpenLeo/explorer/data/bundles/<owner>/<repo>/<branch>/`. The workflow checks the
-  default sources every 20 minutes and rebuilds a bundle when its repository changed. Every file of a bundle keeps
+  `raw.githubusercontent.com/OpenLeo/explorer/data/bundles/<owner>/<repo>/<branch>/`. The workflow runs on each
+  push to PSA-RE (PSA-RE's `explorer bundle` workflow sends a `psa-re-push` repository dispatch, with a token
+  stored in its `EXPLORER_DISPATCH_TOKEN` secret), and every hour as a fallback; it rebuilds a bundle when its
+  repository changed. Every file of a bundle keeps
   its git blob hash: the explorer only takes a file from the bundle when the hash matches the GitHub listing, so a
   bundle older than the repository is still used and only the files changed since are downloaded.
   `?bundles=<url>` uses another bundles directory (self-hosted copy), `?bundles=none` disables them.
