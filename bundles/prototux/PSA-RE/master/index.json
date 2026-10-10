@@ -1,0 +1,19 @@
+{
+ "format": 1,
+ "parser": 1,
+ "commit": "67f7581e7622410efdbb29c7eda3b86982b9b450",
+ "tree": "42dd4e7ca79ad781823d80c0b1a2ef8595e3ae2c",
+ "built": "2026-10-10T23:00:12.472Z",
+ "parts": {
+  "core": {
+   "file": "core.json.gz",
+   "files": 3569,
+   "bytes": 9809066
+  },
+  "diag": {
+   "file": "diag.json.gz",
+   "files": 20876,
+   "bytes": 11197056
+  }
+ }
+}
