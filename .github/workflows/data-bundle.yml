@@ -1,0 +1,63 @@
+# Data bundles of the default sources (tools/make_bundle.mjs), published on the 'data' branch (one commit, replaced
+# at every update) and read by the explorer from raw.githubusercontent.com. A bundle older than its repository is
+# still used: the explorer downloads the files changed since one by one.
+name: data bundle
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['js/core/**', 'vendor/**', 'tools/make_bundle.mjs', '.github/workflows/data-bundle.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-bundle
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    env:
+      SOURCES: prototux/PSA-RE@master       # owner/repo@branch, space separated
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the out of date bundles
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git fetch -q --depth 1 origin data
+            git archive FETCH_HEAD | tar -x -C out
+          fi
+          parser=$(node -e "import('./js/core/yamlparse.js').then((m) => console.log(m.PARSE_VERSION))")
+          changed=0
+          for src in $SOURCES; do
+            repo=${src%@*}; branch=${src#*@}
+            dir="out/bundles/$repo/$branch"
+            head=$(git ls-remote "https://github.com/$repo" "refs/heads/$branch" | cut -f1)
+            if [ -z "$head" ]; then echo "::warning::$src not found"; continue; fi
+            cur=$(jq -r '.commit + " " + (.parser | tostring)' "$dir/index.json" 2>/dev/null || echo none)
+            if [ "$cur" = "$head $parser" ] && [ "$GITHUB_EVENT_NAME" = schedule ]; then echo "$src: up to date"; continue; fi
+            rm -rf src
+            git clone -q --depth 1 --branch "$branch" "https://github.com/$repo" src
+            rm -rf "$dir"
+            node tools/make_bundle.mjs src "$dir" --commit "$head"
+            changed=1
+          done
+          if [ "$changed" = 1 ]; then
+            cd out
+            git init -q -b data
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -A
+            git commit -q -m 'Data bundles'
+            git push -q -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+          fi

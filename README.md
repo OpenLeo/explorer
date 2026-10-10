@@ -100,7 +100,8 @@ they are merged in the configured order (the first one wins by default), every o
 in the data show a red "never released" badge.
 
 1. **GitHub** (owner, repo, branch, optional sub-path): one call to the tree API
-   (`/git/trees/<branch>?recursive=1`), then files from `raw.githubusercontent.com` (16 parallel requests).
+   (`/git/trees/<branch>?recursive=1`), then the data bundle of the repository when there is one (see below), and
+   the other files from `raw.githubusercontent.com` (32 parallel requests).
    Git symlinks (mode `120000`) are resolved relative to the link and reuse the target's parsed data.
    When the API is rate limited (60 calls/hour unauthenticated) the loader falls back to jsDelivr
    (`data.jsdelivr.com` listing, `cdn.jsdelivr.net/gh/…` files). An optional token (settings) raises the limit;
@@ -119,8 +120,28 @@ in the data show a red "never released" badge.
 3. **Local folder**: picked with the File System Access API when available, or `<input webkitdirectory>`
    (files are read locally, nothing is uploaded). The folder must be picked again after a page reload.
 
-Parsed files are cached in IndexedDB, keyed by source + revision (GitHub tree SHA, jsDelivr commit, manifest
-revision or listing hash): reloading is instant until the repository changes. The ⟳ button reloads without cache.
+Loading is kept short:
+
+* **Diagnostic data on demand**: the DIDs, LIDs, routines, I/O controls and fault codes (most of `diag/`) are not
+  loaded at start-up. An ECU page loads the files of its ECU, the DTC lookup loads the fault code tables, and the
+  counts come from the file listing in the meantime. With a bundle, the rest of `diag/` is loaded in the background
+  (status bar: "loading diagnostics…"), so the global search finds diagnostic identifiers too.
+* **Data bundles**: the parsed files of a repository in two gzipped JSON files (`core` at start-up, `diag` when
+  needed), published by the `data bundle` workflow of this repository on its `data` branch and read from
+  `raw.githubusercontent.com/OpenLeo/explorer/data/bundles/<owner>/<repo>/<branch>/`. The workflow checks the
+  default sources every 20 minutes and rebuilds a bundle when its repository changed. Every file of a bundle keeps
+  its git blob hash: the explorer only takes a file from the bundle when the hash matches the GitHub listing, so a
+  bundle older than the repository is still used and only the files changed since are downloaded.
+  `?bundles=<url>` uses another bundles directory (self-hosted copy), `?bundles=none` disables them.
+  Build one by hand with `node tools/make_bundle.mjs <repository> <output dir>`.
+* **Caches** (IndexedDB): the parsed files of the source revision (reloading is instant until the repository
+  changes), and every parsed file by content hash (git blob SHA, or jsDelivr hash), so after an update of the
+  repository only the files that changed are downloaded. Entries no source lists any more are pruned. The ⟳ button
+  reloads without the revision cache; Settings › clear cache empties both.
+* **Parsing** of the downloaded YAML files runs in web workers (main thread fallback).
+
+Note: GitHub disables scheduled workflows of a repository without activity for 60 days; run the workflow by hand
+(Actions › data bundle › Run workflow) to re-enable it. The explorer keeps working without bundle, only slower.
 
 The loader is tolerant: YAML errors are collected per file (Tools › Data issues) and legacy constructs are
 normalized with a warning badge (`periodicity: 10` → `['10ms']`, free-text periodicities, `type: 'VAN'`,
@@ -143,10 +164,12 @@ js/core/                UI independent logic (runs in node, unit tested)
   codec.js              decode / encode payloads (uint, sint, bool, enum, bcd, str, bytes, float, mux, byte order)
   paths.js              repository path conventions, symlink resolution
   yamlparse.js          js-yaml loading (CDN / vendored), tolerant parsing, encoding fallback
-  sources.js            GitHub / jsDelivr / HTTP (manifest or listing) / local folder loaders
-  cache.js              IndexedDB cache + safe localStorage
+  sources.js            GitHub / jsDelivr / HTTP (manifest or listing) / local folder loaders, data bundles,
+                        on-demand loading session (bundle, per-file cache, network)
+  parsepool.js          web workers pool parsing the YAML files (parseworker.js)
+  cache.js              IndexedDB caches (source revision, files by content hash) + safe localStorage
   repo.js               database build: merge sources, variants inheritance, nodes, cars, frames, diag,
-                        overrides, search index, diffs
+                        overrides, search index, diffs; diagnostic files loaded on demand (ensureEcuDiag, ensureDtcs)
   signalref.js          exact-name signal catalog across effective variant frames and differing frame IDs
   dbc.js                DBC and JSON export
   codegen.js            C header, Python, transmit snippets, LIN PID/checksum
@@ -169,6 +192,7 @@ js/ui/                  DOM code
   views/                one module per tab (frames, frame detail, signals, archs, cars, ecus, diag, tools, about,
                         settings)
 tools/make_manifest.py  manifest generator for HTTP sources
+tools/make_bundle.mjs   data bundle builder (used by .github/workflows/data-bundle.yml)
 tests/                  node --test unit tests + fixtures (small repositories with symlinks, a second source)
 ```
 
@@ -186,7 +210,8 @@ The tests cover the bit notation and DBC conversions, normalization of legacy da
 manifest, a real `python3 -m http.server` crawl of `../PSA-RE`), symlinks, variant inheritance, multi-source
 merging, search, DTC codes, DBC export, generated C (compiled with `gcc -Wall -Werror` and compared with the JS
 codec on random payloads of every PSA-RE frame), generated Python (run with `python3`), log parsing, ISO-TP,
-the seed/key algorithm (vectors from the Python reference), bus load, and the `dbmuxev/doc` examples.
+the seed/key algorithm (vectors from the Python reference), bus load, the `dbmuxev/doc` examples, and the
+on-demand diagnostics, per-file cache and data bundles (stale bundle included) against a mocked GitHub.
 Tests needing `../PSA-RE`, `gcc` or `python3` are skipped when absent.
 
 ## Known limitations

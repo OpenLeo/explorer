@@ -3,9 +3,12 @@
 import { html, $, $$, on, setHtml, toast, copyText, download } from './ui/dom.js';
 import { app, saveSettings, emit } from './ui/state.js';
 import { getBlob } from './ui/widgets.js';
-import { loadSource, sourceDefaults, fileListToLocal } from './core/sources.js';
-import { idbCache } from './core/cache.js';
-import { buildDatabase, search } from './core/repo.js';
+import { loadSource, sourceDefaults, fileListToLocal, DEFAULT_BUNDLE_BASE } from './core/sources.js';
+import { idbCache, idbFiles } from './core/cache.js';
+import { buildDatabase, search, ensureAllDiag, diagPending } from './core/repo.js';
+import { isDeferred } from './core/paths.js';
+import { createParsePool } from './core/parsepool.js';
+import { afterLoad } from './ui/lazy.js';
 import { getYaml } from './core/yamlparse.js';
 import { LANGS, esc, debounce } from './core/util.js';
 import { renderFrames } from './ui/views/frames.js';
@@ -104,6 +107,21 @@ function progressHtml(state) {
   </div>`;
 }
 
+/** bundles directory: ?bundles=<url> (a self-hosted copy), ?bundles=none (no bundle), else the published one */
+function bundleBase() {
+  const q = new URLSearchParams(location.search).get('bundles');
+  if (q === 'none') return null;
+  return q || DEFAULT_BUNDLE_BASE;
+}
+
+let parsePool;
+function getParsePool() {
+  if (parsePool === undefined) {
+    try { parsePool = createParsePool(Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1))); } catch (e) { parsePool = null; }
+  }
+  return parsePool;
+}
+
 export async function loadAll(force = false) {
   if (app.loading) return;
   app.loading = true;
@@ -133,6 +151,8 @@ export async function loadAll(force = false) {
       if (!yaml) throw new Error('no YAML parser');
       const src = await loadSource(c, {
         yaml, cache: idbCache, force,
+        // diagnostic data (DIDs, LIDs, routines, I/O controls, fault codes) is loaded when a page needs it
+        defer: isDeferred, fileCache: idbFiles, bundleBase: bundleBase(), parse: getParsePool(), concurrency: 32,
         onProgress: (p) => { if (p.total !== undefined) { st.done = p.done; st.total = p.total; } st.msg = p.message || p.phase; paint(); },
       });
       st.msg = src.fromCache ? 'from cache' : 'done';
@@ -148,6 +168,7 @@ export async function loadAll(force = false) {
     }
   }));
   const ok = results.filter(Boolean);
+  app.loadedSources = ok;
   if (ok.length) {
     try {
       app.db = buildDatabase(ok);
@@ -166,6 +187,27 @@ export async function loadAll(force = false) {
   const root = $('#view');
   root.dataset.view = '';
   route();
+  afterDbLoaded(ok, ok.length === results.length);
+}
+
+/** Housekeeping once the data is displayed: per-file cache pruning, background loading of the diagnostics. */
+function afterDbLoaded(ok, allSources) {
+  const db = app.db;
+  if (!db) return;
+  // keep only the cached files that a source still lists (when every source could be listed)
+  if (allSources) {
+    const keep = new Set();
+    for (const s of ok) if (s.session) for (const f of s.session.listing.files) { const k = s.session.key(f); if (k) keep.add(k); }
+    setTimeout(() => { idbFiles.prune(keep).catch(() => {}); }, 5000);
+  }
+  // with a bundle the diagnostics are one more download: load them in the background (global search, counts)
+  if (diagPending(db) && ok.some((s) => s.session && s.session.bundle)) {
+    setTimeout(() => {
+      if (app.db !== db) return;
+      app.diagLoading = true; updateStatus();
+      afterLoad(ensureAllDiag(db), () => false).finally(() => { app.diagLoading = false; if (app.db === db) updateStatus(); });
+    }, 1500);
+  }
 }
 
 function updateStatus() {
@@ -175,7 +217,7 @@ function updateStatus() {
   const errs = db.issues.filter((i) => i.level === 'error').length;
   const warns = db.issues.filter((i) => i.level === 'warning').length;
   setHtml(box, html`${db.sources.map((s) => html`<a href="#/settings" class="badge src-badge" style="--c:${s.color}" title="data source">${s.label}</a>`)}
-    <span class="muted small" title="${app.sourceNotes.join('\n')}">${db.primaryFrames.length} frames</span>
+    <span class="muted small" title="${app.sourceNotes.join('\n')}">${db.primaryFrames.length} frames${app.diagLoading ? ' · loading diagnostics…' : ''}</span>
     ${errs || warns ? html`<a href="#/tools/issues" class="badge badge-warn" title="Data issues found while loading">⚠ ${errs + warns}</a>` : ''}
     ${app.loadErrors.length ? html`<a href="#/settings" class="badge badge-danger" title="${app.loadErrors.join('\n')}">load error</a>` : ''}`);
 }

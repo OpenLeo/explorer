@@ -5,6 +5,9 @@
 let lib = null;
 let loading = null;
 
+/** Version of what parseYaml returns: cached and bundled parsed files of another version are ignored */
+export const PARSE_VERSION = 1;
+
 export const YAML_CDN = 'https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.mjs';
 
 export function setYamlLib(l) { lib = l && (l.load ? l : l.default); }

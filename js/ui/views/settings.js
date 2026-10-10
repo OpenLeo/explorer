@@ -3,7 +3,7 @@
 import { html, $, on, setHtml, toast } from '../dom.js';
 import { app, saveSettings } from '../state.js';
 import { sourceDefaults, fileListToLocal, SOURCE_COLORS, DEFAULT_SOURCE } from '../../core/sources.js';
-import { idbCache } from '../../core/cache.js';
+import { idbCache, idbFiles } from '../../core/cache.js';
 
 let work = null; // working copy of the sources
 
@@ -133,7 +133,7 @@ function bind(root) {
         app.loadAll(act === 'refresh');
       } else if (act === 'revert') { work = app.settings.sources.map((s) => ({ ...s })); redraw(); }
       else if (act === 'save-token') { app.settings.token = $('#token', root).value.trim(); saveSettings(); toast('Token saved'); }
-      else if (act === 'clear-cache') { await idbCache.clear(); toast('Cache cleared'); }
+      else if (act === 'clear-cache') { await idbCache.clear(); await idbFiles.clear(); toast('Cache cleared'); }
     }),
     on(root, 'change', '#preset', (ev, el) => {
       if (el.value === '') return;

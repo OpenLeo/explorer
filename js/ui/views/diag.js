@@ -2,6 +2,7 @@
 // DTC lookup, ISO-TP request builder, PSA seed/key calculator.
 
 import { html, $, $$, on, setHtml } from '../dom.js';
+import { afterLoad } from '../lazy.js';
 import { app, lang } from '../state.js';
 import { t, tabs, codeBlock, kv, emptyState, sourceBadge, nodeLink, valuesList } from '../widgets.js';
 import { hex, bytesToHex, parseHexBytes, fmtNum, naturalCompare } from '../../core/util.js';
@@ -10,7 +11,7 @@ import { renderGrid, renderLegend, hueMap } from '../bitgrid.js';
 import { UDS_SERVICES, KWP_SERVICES, OBD_SERVICES, NRC, UDS_SESSIONS, COMMON_DIDS, describeMessage } from '../../core/diagref.js';
 import { segment, flowControl, describeStMin } from '../../core/isotp.js';
 import { computeKey, ALGORITHM_DESCRIPTION } from '../../core/seedkey.js';
-import { dtcToRaw, rawToDtc, frameRoute, diagEcuKey, diagEcusOfNode } from '../../core/repo.js';
+import { dtcToRaw, rawToDtc, frameRoute, diagEcuKey, diagEcusOfNode, diagCount, diagPending, ensureEcuDiag, ensureDtcs } from '../../core/repo.js';
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -40,6 +41,9 @@ function parseHexInt(s) {
   const m = /^\s*(?:0x)?([0-9a-f]{1,8})\s*$/i.exec(String(s ?? ''));
   return m ? parseInt(m[1], 16) : null;
 }
+/** count for a table cell: '…' while the fault codes are not loaded */
+function cnt(e, kind) { const n = diagCount(e, kind); return n === null ? '…' : n; }
+
 function diagOf(db) { return (db && db.diag) || { protocols: new Map(), ecus: new Map(), dtcIndex: [] }; }
 function replaceHash(h) { try { history.replaceState(null, '', h); if (app.route) app.route.hash = h; } catch (e) { /* ignore */ } }
 
@@ -124,7 +128,7 @@ export function renderDiag(root, route) {
     { id: 'overview', label: 'Overview' },
     { id: 'protocols', label: 'Protocols', count: dg.protocols.size || undefined },
     { id: 'addressing', label: 'ECU addressing' },
-    { id: 'dtc', label: 'DTC lookup', count: dg.dtcIndex.length || undefined },
+    { id: 'dtc', label: 'DTC lookup', count: (!diagPending(db, null, 'dtcs') && dg.dtcIndex.length) || undefined },
     { id: 'request', label: 'Request builder (ISO-TP)' },
     { id: 'seedkey', label: 'Seed / key' },
   ], activeTab, (id) => (id === 'overview' ? '#/diag' : `#/diag/${id}`));
@@ -163,7 +167,7 @@ function noDiagBanner(db) {
 function renderOverview(db) {
   const dg = diagOf(db);
   let dids = 0; let lids = 0; let routines = 0; let ioctls = 0;
-  for (const e of dg.ecus.values()) { dids += arr(e.dids).length; lids += arr(e.lids).length; routines += arr(e.routines).length; ioctls += arr(e.ioctls).length; }
+  for (const e of dg.ecus.values()) { dids += diagCount(e, 'dids'); lids += diagCount(e, 'lids'); routines += diagCount(e, 'routines'); ioctls += diagCount(e, 'ioctls'); }
   const rows = addressingRows(db);
   const ecus = [...dg.ecus.values()].sort((a, b) => naturalCompare(a.archvar, b.archvar) || naturalCompare(a.node, b.node) || naturalCompare(a.model || '', b.model || ''));
   return html`${noDiagBanner(db)}
@@ -171,14 +175,14 @@ function renderOverview(db) {
       <div class="card"><h3><a href="#/diag/protocols">Protocols</a></h3><p>${dg.protocols.size ? `${dg.protocols.size} protocol definition(s): ${[...dg.protocols.keys()].join(', ')}` : 'Built-in UDS / KWP2000 / OBD reference (services, NRCs).'}</p></div>
       <div class="card"><h3><a href="#/diag/addressing">ECU addressing</a></h3><p>${rows.length} addressing entr${rows.length === 1 ? 'y' : 'ies'} (request / response CAN IDs, K-line addresses).</p></div>
       <div class="card"><h3>ECU data</h3><p>${dg.ecus.size} ECU(s) with diag data · ${dids} DIDs · ${lids} LIDs · ${routines} routines · ${ioctls} I/O controls</p></div>
-      <div class="card"><h3><a href="#/diag/dtc">DTC lookup</a></h3><p>${dg.dtcIndex.length} documented DTC(s). Converts codes like <code>B1003</code> ⇄ <code>0x9003</code>.</p></div>
+      <div class="card"><h3><a href="#/diag/dtc">DTC lookup</a></h3><p>${diagPending(db, null, 'dtcs') ? 'Fault codes loaded when the lookup is opened.' : `${dg.dtcIndex.length} documented DTC(s).`} Converts codes like <code>B1003</code> ⇄ <code>0x9003</code>.</p></div>
       <div class="card"><h3><a href="#/diag/request">Request builder</a></h3><p>Turns a request like <code>22 F1 90</code> into the ISO-TP CAN frames (single / multi frame, flow control).</p></div>
       <div class="card"><h3><a href="#/diag/seedkey">Seed / key</a></h3><p>PSA SecurityAccess key computation from a 4-byte seed and a 2-byte application key.</p></div>
     </div>
     ${ecus.length ? html`<h3>ECUs with diagnostic data</h3>
       <div class="tablewrap"><table class="tbl"><thead><tr><th>Architecture</th><th>ECU</th><th>Model</th><th>Protocols</th><th>DIDs</th><th>LIDs</th><th>DTCs</th><th>Routines</th><th>I/O</th><th>Source</th></tr></thead><tbody>
       ${ecus.map((e) => html`<tr><td>${e.archvar}</td><td><a href="${ecuDiagHref(e.archvar, ecuRef(e))}"><b class="mono">${e.node}</b></a></td><td>${e.model ? html`<a class="mono" href="${ecuDiagHref(e.archvar, ecuRef(e))}">${e.model}</a>` : ''}</td><td>${arr(e.ecu && e.ecu.protocols).join(', ')}</td>
-        <td class="num">${arr(e.dids).length}</td><td class="num">${arr(e.lids).length}</td><td class="num">${arr(e.dtcs).length}</td><td class="num">${arr(e.routines).length}</td><td class="num">${arr(e.ioctls).length}</td><td>${sourceBadge(e.source)}</td></tr>`)}
+        <td class="num">${cnt(e, 'dids')}</td><td class="num">${cnt(e, 'lids')}</td><td class="num">${cnt(e, 'dtcs')}</td><td class="num">${cnt(e, 'routines')}</td><td class="num">${cnt(e, 'ioctls')}</td><td>${sourceBadge(e.source)}</td></tr>`)}
       </tbody></table></div>` : ''}
     <p class="muted small">Diagnostic access can change ECU configuration and, on the IS (high speed) bus, safety-relevant behavior. Use at your own risk.</p>`;
 }
@@ -391,7 +395,7 @@ function modelPicker(archvar, node, models) {
     <div class="tablewrap"><table class="tbl"><thead><tr><th>Model</th><th>Description</th><th>Protocols</th><th>Cars</th><th>Variants</th><th>DIDs</th><th>LIDs</th><th>DTCs</th><th>Routines</th><th>I/O</th></tr></thead><tbody>
     ${models.map((e) => html`<tr><td><a class="mono" href="${ecuDiagHref(archvar, ecuRef(e))}"><b>${e.model}</b></a></td><td>${t(e.ecu && e.ecu.displayName)}</td><td>${arr(e.ecu && e.ecu.protocols).join(', ')}</td>
       <td class="small">${arr(e.ecu && e.ecu.cars).join(', ')}</td><td class="num">${arr(e.ecu && e.ecu.variants).length}</td>
-      <td class="num">${arr(e.dids).length}</td><td class="num">${arr(e.lids).length}</td><td class="num">${arr(e.dtcs).length}</td><td class="num">${arr(e.routines).length}</td><td class="num">${arr(e.ioctls).length}</td></tr>`)}
+      <td class="num">${cnt(e, 'dids')}</td><td class="num">${cnt(e, 'lids')}</td><td class="num">${cnt(e, 'dtcs')}</td><td class="num">${cnt(e, 'routines')}</td><td class="num">${cnt(e, 'ioctls')}</td></tr>`)}
     </tbody></table></div>`;
 }
 
@@ -449,6 +453,8 @@ function renderEcu(db, archvar, node, route, model = null) {
   const addr = addressingRows(db).filter((r) => r.archvar === archvar && r.node === node && (r.from !== 'diag' || (r.model || null) === (model || null)));
   if (!e && !addr.length) return html`${emptyState(`No diagnostic data for ${node}`, `Nothing in diag/${archvar}/${node}/ nor a diag block in nodes/${archvar}.yml.`)}<p><a href="#/ecus/${archvar}/${encodeURIComponent(node)}">ECU page</a></p>`;
   const ecu = (e && e.ecu) || {};
+  const loading = !!(e && diagPending(db, e));
+  if (loading) afterLoad(ensureEcuDiag(db, e.key), (r) => r.view === 'diag' && r.parts[1] === 'ecu' && r.parts[2] === archvar && r.parts[3] === node && (r.parts[4] || null) === (model || null));
   const protos = arr(ecu.protocols).length ? arr(ecu.protocols) : arr(nd && nd.diag && nd.diag.protocols);
   const groups = e ? [['did', arr(e.dids)], ['lid', arr(e.lids)], ['routine', arr(e.routines)], ['ioctl', arr(e.ioctls)]].filter((g) => g[1].length) : [];
   const all = groups.flatMap((g) => g[1]);
@@ -467,7 +473,7 @@ function renderEcu(db, archvar, node, route, model = null) {
         ${siblings.length > 1 ? html`<h4>Other models</h4><ul class="plain small">${siblings.filter((x) => x.model !== model).map((x) => html`<li><a class="mono" href="${ecuDiagHref(archvar, ecuRef(x))}">${x.model}</a></li>`)}</ul>` : ''}
       </aside>
       <section class="flist"><div class="flist-body" id="ecu-items">
-        ${all.length ? groups.map(([k, l]) => html`<div class="dgroup" data-kind="${k}">${KIND_LABEL[k]}s <span class="count">${l.length}</span></div>${l.map((it) => itemRow(it, archvar, nk, selected))}`) : html`<p class="muted" style="padding:10px">No identifiers documented.</p>`}
+        ${loading ? html`<p class="muted" style="padding:10px">Loading the diagnostic data of this ECU…</p>` : all.length ? groups.map(([k, l]) => html`<div class="dgroup" data-kind="${k}">${KIND_LABEL[k]}s <span class="count">${l.length}</span></div>${l.map((it) => itemRow(it, archvar, nk, selected))}`) : html`<p class="muted" style="padding:10px">No identifiers documented.</p>`}
       </div></section>
       <section class="fdetail" id="ecu-detail">${detail}</section>
     </div>`;
@@ -508,6 +514,7 @@ function dtcTable(list, ft = null) {
 
 function dtcResults(db, q) {
   const idx = arr(diagOf(db).dtcIndex);
+  if (diagPending(db, null, 'dtcs')) return html`<div class="notice">Loading the fault code tables…</div>`;
   const p = parseDtcQuery(q);
   const s = String(q || '').trim().toLowerCase();
   let head = '';
@@ -534,6 +541,7 @@ function dtcResults(db, q) {
 
 function renderDtcPage(db, route) {
   const q = route.query.q || '';
+  if (diagPending(db, null, 'dtcs')) afterLoad(ensureDtcs(db), (r) => r.view === 'diag' && r.parts[1] === 'dtc');
   return html`${noDiagBanner(db)}
     <div class="filterbar"><input type="search" id="dtc-q" data-live="dtc" class="mono" placeholder="B1003, B1003-11, 0x9003, D50A or text" value="${q}" autocomplete="off" spellcheck="false"></div>
     <div id="dtc-out">${dtcResults(db, q)}</div>`;

@@ -4,12 +4,15 @@
 // UI independent: fetch and the YAML library are injectable (node tests).
 
 import { isRelevant, classify, resolveLink, normPath } from './paths.js';
-import { parseYaml, decodeText, getYaml } from './yamlparse.js';
+import { parseYaml, decodeText, getYaml, PARSE_VERSION } from './yamlparse.js';
 import { mapLimit, fnv1a } from './util.js';
 
 export const DEFAULT_SOURCE = {
   id: 'psa-re', kind: 'github', label: 'PSA-RE', owner: 'prototux', repo: 'PSA-RE', branch: 'master', subpath: '', enabled: true,
 };
+
+/** Where the data bundles are published (tools/make_bundle.mjs, built by the explorer repository's data-bundle workflow) */
+export const DEFAULT_BUNDLE_BASE = 'https://raw.githubusercontent.com/OpenLeo/explorer/data/bundles/';
 
 export const SOURCE_COLORS = ['#2f7dd1', '#d9822b', '#b04ad9', '#2fa66a', '#c9404a', '#6b7a8f'];
 
@@ -63,10 +66,25 @@ async function fetchWithRetry(fetchFn, url, opts = {}, tries = 3) {
 }
 
 /**
- * Turn raw entries into parsed files.
- * entries: [{path, bytes|text, linkText?}] where linkText is the raw target of a symlink.
+ * Parse one fetched file. Returns {path, data, issues} (plus {text} for the markdown/text notes of a bus directory),
+ * or {path, linkText} when the content is a symlink stored as a text file.
+ * Used on the main thread, in the parse workers and by the bundle builder (same result everywhere).
  */
-export function parseEntries(entries, yaml) {
+export function parseOne(path, src, yaml) {
+  const c = classify(path);
+  const { text } = decodeText(src);
+  if (c && c.kind === 'busdoc') return { path, data: null, text, issues: [] };
+  if (looksLikeLinkText(text)) return { path, linkText: text.trim() };
+  const { data, issues } = parseYaml(src, yaml);
+  return { path, data, issues };
+}
+
+/**
+ * Turn raw entries into parsed files.
+ * entries: [{path, bytes|text|parsed, linkText?}] where linkText is the raw target of a symlink and parsed the result
+ * of parseOne. known: optional Map path -> parsed file of earlier batches (symlink targets).
+ */
+export function parseEntries(entries, yaml, known = null) {
   const byPath = new Map();
   const files = [];
   const pending = [];
@@ -75,18 +93,11 @@ export function parseEntries(entries, yaml) {
       files.push({ path: e.path, data: null, issues: [{ level: 'error', msg: `could not load: ${e.error}` }], link: null });
       continue;
     }
-    const c = classify(e.path);
     if (e.linkText !== undefined && e.linkText !== null) { pending.push(e); continue; }
-    if (c && c.kind === 'busdoc') {
-      const { text } = decodeText(e.bytes !== undefined ? e.bytes : e.text);
-      files.push({ path: e.path, data: null, text, issues: [], link: null });
-      continue;
-    }
-    const src = e.bytes !== undefined ? e.bytes : e.text;
-    const { text } = decodeText(src);
-    if (looksLikeLinkText(text)) { pending.push({ ...e, linkText: text.trim() }); continue; }
-    const { data, issues } = parseYaml(src, yaml);
-    const f = { path: e.path, data, issues, link: null };
+    const p = e.parsed || parseOne(e.path, e.bytes !== undefined ? e.bytes : e.text, yaml);
+    if (p.linkText !== undefined && p.linkText !== null) { pending.push({ path: e.path, linkText: p.linkText }); continue; }
+    const f = { path: e.path, data: p.data === undefined ? null : p.data, issues: p.issues || [], link: null };
+    if (p.text !== undefined) f.text = p.text;
     byPath.set(e.path, f);
     files.push(f);
   }
@@ -96,8 +107,8 @@ export function parseEntries(entries, yaml) {
     let target = linkMap.get(e.path);
     let hops = 0;
     while (linkMap.has(target) && hops++ < 10) target = linkMap.get(target);
-    const t = byPath.get(target);
-    if (t) files.push({ path: e.path, data: t.data, issues: [], link: target, text: t.text });
+    const t = byPath.get(target) || (known && known.get(target));
+    if (t) files.push({ path: e.path, data: t.data, issues: [], link: t.link || target, text: t.text });
     else files.push({ path: e.path, data: null, issues: [{ level: 'error', msg: `broken symlink to ${e.linkText}` }], link: target });
   }
   return files;
@@ -126,7 +137,7 @@ export async function listGithub(cfg, fetchFn) {
     if (t.type !== 'blob') continue;
     const p = stripSub(t.path, cfg.subpath);
     if (p === null || !isRelevant(p)) continue;
-    files.push({ path: p, repoPath: t.path, link: t.mode === '120000', size: t.size });
+    files.push({ path: p, repoPath: t.path, link: t.mode === '120000', size: t.size, sha: t.sha });
   }
   return { revision: j.sha, truncated: !!j.truncated, files };
 }
@@ -147,7 +158,7 @@ export async function listJsdelivr(cfg, fetchFn) {
     const full = String(f.name).replace(/^\//, '');
     const p = stripSub(full, cfg.subpath);
     if (p === null || !isRelevant(p)) continue;
-    files.push({ path: p, repoPath: full, link: false, size: f.size });
+    files.push({ path: p, repoPath: full, link: false, size: f.size, hash: f.hash || null });
   }
   return { revision, files, jsdelivr: true };
 }
@@ -239,12 +250,192 @@ export async function listHttp(cfg, fetchFn, onProgress) {
 }
 
 // ---------------------------------------------------------------------------
+// Bundle: the parsed files of a repository revision in a few gzipped JSON files (tools/make_bundle.mjs)
+// ---------------------------------------------------------------------------
+
+export const BUNDLE_FORMAT = 1;
+
+async function gunzipJson(buf) {
+  const head = new Uint8Array(buf, 0, Math.min(2, buf.byteLength));
+  // already decompressed by the browser (server sending Content-Encoding: gzip)
+  if (!(head[0] === 0x1F && head[1] === 0x8B)) return JSON.parse(new TextDecoder().decode(buf));
+  if (typeof DecompressionStream === 'undefined') throw new Error('no DecompressionStream');
+  const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return JSON.parse(await new Response(stream).text());
+}
+
+/**
+ * Bundle of a GitHub source, or null. base: URL of the bundles directory (…/bundles/), the bundle of
+ * owner/repo@branch being at <base><owner>/<repo>/<branch>/index.json.
+ */
+export async function openBundle(base, cfg, fetchFn) {
+  if (!base || cfg.kind !== 'github' || cfg.subpath) return null;
+  const dir = `${baseUrl(base)}${cfg.owner}/${cfg.repo}/${cfg.branch || 'master'}/`;
+  let index;
+  try {
+    const r = await fetchFn(dir + 'index.json', { cache: 'no-cache' });
+    if (!r.ok) return null;
+    index = await r.json();
+  } catch (e) { return null; }
+  if (!index || index.format !== BUNDLE_FORMAT || index.parser !== PARSE_VERSION || !index.parts) return null;
+  const parts = new Map();
+  return {
+    index,
+    /** Map path -> bundle entry of a part ('core' or 'diag'), fetched once */
+    part(name) {
+      if (!parts.has(name)) {
+        const info = index.parts[name];
+        parts.set(name, (async () => {
+          if (!info) return new Map();
+          const r = await fetchWithRetry(fetchFn, dir + info.file, {}, 2);
+          const j = await gunzipJson(await r.arrayBuffer());
+          return new Map((j.files || []).map((e) => [e.p, e]));
+        })().catch(() => new Map()));
+      }
+      return parts.get(name);
+    },
+  };
+}
+
+function bundleParsed(e) {
+  if (e.l !== undefined) return { path: e.p, linkText: e.l };
+  const out = { path: e.p, data: e.d === undefined ? null : e.d, issues: e.i || [] };
+  if (e.t !== undefined) out.text = e.t;
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Generic loader
 // ---------------------------------------------------------------------------
 
 /**
+ * Files of a listed source, loaded on demand: from the bundle (same content hash), the per-file cache (content
+ * hash), or the network; symlink targets are loaded with their links. Keeps the parsed files by path.
+ */
+export class SourceSession {
+  constructor({ listing, fileUrl, yaml, fetchFn, concurrency, fileCache, bundle, parse, partOf }) {
+    Object.assign(this, { listing, fileUrl, yaml, fetchFn, concurrency, fileCache, bundle, parse, partOf });
+    this.byPath = new Map(listing.files.map((f) => [f.path, f]));
+    this.parsed = new Map();       // path -> parsed file
+    this.inflight = new Map();     // path -> promise of the batch loading it
+    this.stats = { bundle: 0, cache: 0, fetched: 0 };
+  }
+
+  /** content key of a listed file for the per-file cache, null when unknown */
+  key(f) {
+    if (f.sha) return `${PARSE_VERSION}:g:${f.sha}`;
+    if (f.hash) return `${PARSE_VERSION}:h:${f.hash}`;
+    return null;
+  }
+
+  /** Load paths (listed paths; link targets come along). Returns the parsed files of the requested paths. */
+  async load(paths, progress = () => {}) {
+    const want = [...new Set(paths)].filter((p) => !this.parsed.has(p));
+    const waits = want.filter((p) => this.inflight.has(p)).map((p) => this.inflight.get(p));
+    const todo = want.filter((p) => !this.inflight.has(p));
+    if (todo.length) {
+      const job = this._load(todo, progress);
+      for (const p of todo) this.inflight.set(p, job);
+      try { await job; } finally { for (const p of todo) this.inflight.delete(p); }
+    }
+    await Promise.all(waits);
+    return paths.map((p) => this.parsed.get(p)).filter(Boolean);
+  }
+
+  async _load(paths, progress) {
+    const entries = new Map();     // path -> {path, parsed|linkText|bytes|error}
+    const fetchList = [];
+    // 1. bundle
+    const fromBundle = new Map();
+    if (this.bundle) {
+      const parts = [...new Set(paths.map((p) => this.partOf(p)))];
+      const maps = await Promise.all(parts.map((n) => this.bundle.part(n)));
+      for (const m of maps) for (const [k, v] of m) fromBundle.set(k, v);
+    }
+    const cacheKeys = [];
+    for (const p of paths) {
+      const f = this.byPath.get(p) || { path: p, repoPath: p };
+      if (f.target) { entries.set(p, { path: p, linkText: relativeTo(p, f.target) }); continue; }
+      const be = fromBundle.get(p);
+      if (be && ((f.sha && be.s === f.sha) || (f.hash && be.h === f.hash) || this.listing.trusted)) {
+        entries.set(p, { path: p, parsed: bundleParsed(be) });
+        this.stats.bundle++;
+        continue;
+      }
+      const k = this.key(f);
+      if (k && this.fileCache) cacheKeys.push([p, k]);
+      else fetchList.push(f);
+    }
+    // 2. per-file cache
+    if (cacheKeys.length) {
+      let hits = new Map();
+      try { hits = (await this.fileCache.getMany(cacheKeys.map((x) => x[1]))) || new Map(); } catch (e) { /* no cache */ }
+      for (const [p, k] of cacheKeys) {
+        const v = hits.get(k);
+        if (v) { entries.set(p, { path: p, parsed: { ...v, path: p } }); this.stats.cache++; } else fetchList.push(this.byPath.get(p));
+      }
+    }
+    // 3. network
+    const total = fetchList.length;
+    if (total) progress({ phase: 'fetch', done: 0, total });
+    const fetched = await mapLimit(fetchList, this.concurrency, async (f) => {
+      try {
+        const bytes = await fetchBytes(this.fetchFn, this.fileUrl(f));
+        if (f.link) return { path: f.path, linkText: decodeText(bytes).text.trim(), f };
+        return { path: f.path, bytes, f };
+      } catch (e) {
+        return { path: f.path, error: e.message || String(e) };
+      }
+    }, (done) => progress({ phase: 'fetch', done, total }));
+    this.stats.fetched += total;
+    // 4. parse (workers when available)
+    const toParse = fetched.filter((e) => e.bytes);
+    if (toParse.length) progress({ phase: 'parse', message: 'parsing YAML' });
+    let parsed = null;
+    if (this.parse && toParse.length > 50) {
+      try { parsed = await this.parse(toParse.map((e) => ({ path: e.path, bytes: e.bytes }))); } catch (e) { parsed = null; }
+    }
+    if (!parsed) parsed = toParse.map((e) => parseOne(e.path, e.bytes, this.yaml));
+    const toCache = [];
+    parsed.forEach((pr, i) => {
+      const f = toParse[i].f;
+      entries.set(pr.path, { path: pr.path, parsed: pr });
+      const k = this.key(f);
+      if (k) toCache.push([k, stripPath(pr)]);
+    });
+    for (const e of fetched) {
+      if (e.bytes) continue;
+      entries.set(e.path, e);
+      if (e.linkText !== undefined) { const k = this.key(e.f); if (k) toCache.push([k, { linkText: e.linkText }]); }
+    }
+    if (toCache.length && this.fileCache) { try { await this.fileCache.setMany(toCache); } catch (e) { /* quota */ } }
+    // 5. symlink targets not loaded yet
+    const targets = [];
+    for (const e of entries.values()) {
+      const lt = e.linkText !== undefined ? e.linkText : e.parsed && e.parsed.linkText;
+      if (lt === undefined || lt === null) continue;
+      let t = resolveLink(e.path, lt);
+      if (!this.parsed.has(t) && !entries.has(t)) targets.push(t);
+    }
+    if (targets.length) await this.load(targets, progress);
+    for (const f of parseEntries([...entries.values()], this.yaml, this.parsed)) this.parsed.set(f.path, f);
+  }
+
+  /** every listed path */
+  paths() { return [...this.byPath.keys()]; }
+
+  /** parsed files of the listed paths loaded so far */
+  files() { return [...this.byPath.keys()].filter((p) => this.parsed.has(p)).map((p) => this.parsed.get(p)); }
+}
+
+function stripPath(pr) { const { path, ...rest } = pr; return rest; }
+
+/**
  * Load a source.
- * opts: { fetch, onProgress, cache: {get,set}, force, yaml, concurrency }
+ * opts: { fetch, onProgress, cache: {get,set}, force, yaml, concurrency,
+ *         defer(path) -> true for files to load later (session.load), fileCache: {getMany, setMany} (per-file cache
+ *         by content hash), bundleBase (URL of a bundles directory), parse(items) -> parsed items (workers) }
+ * Returns { meta, files, revision, notes, fromCache, cacheKey, session, deferred: [paths not loaded yet] }.
  * Local sources need cfg.fileList (array of {path, file}) or cfg.dirHandle.
  */
 export async function loadSource(cfg, opts = {}) {
@@ -252,6 +443,7 @@ export async function loadSource(cfg, opts = {}) {
   const progress = opts.onProgress || (() => {});
   const yaml = opts.yaml || await getYaml();
   const concurrency = opts.concurrency || 16;
+  const defer = opts.defer || (() => false);
   const meta = sourceMeta(cfg);
   let listing;
   let fileUrl;
@@ -278,55 +470,58 @@ export async function loadSource(cfg, opts = {}) {
   } else if (cfg.kind === 'local') {
     const entries = await readLocal(cfg, progress);
     const files = parseEntries(entries, yaml);
-    return { meta, files, revision: 'local', notes };
+    return { meta, files, revision: 'local', notes, session: null, deferred: [] };
   } else {
     throw new Error(`unknown source kind ${cfg.kind}`);
   }
 
+  // bundle (GitHub sources): trusted as a whole for its own revision, else file by file (content hash)
+  let bundle = null;
+  if (opts.bundleBase && cfg.kind === 'github') {
+    progress({ phase: 'list', message: 'looking for a bundle' });
+    bundle = await openBundle(opts.bundleBase, cfg, fetchFn);
+    if (bundle) {
+      const ix = bundle.index;
+      listing.trusted = !!(listing.revision && (listing.revision === ix.tree || listing.revision === ix.commit));
+      notes.push(`bundle of ${String(ix.commit || '').slice(0, 7)}${listing.trusted ? '' : ' (older revision, changed files fetched one by one)'}`);
+    }
+  }
+  const session = new SourceSession({
+    listing, fileUrl, yaml, fetchFn, concurrency, fileCache: opts.fileCache || null, bundle, parse: opts.parse || null,
+    partOf: (p) => (defer(p) ? 'diag' : 'core'),
+  });
+
   const cacheKey = `${cfg.kind}|${cfg.kind === 'github' ? `${cfg.owner}/${cfg.repo}@${cfg.branch}/${cfg.subpath || ''}` : cfg.url}|${listing.revision}`;
+  const now = listing.files.filter((f) => !defer(f.path)).map((f) => f.path);
   if (opts.cache && !opts.force) {
     try {
       const hit = await opts.cache.get(cacheKey);
       if (hit && Array.isArray(hit.files)) {
-        progress({ phase: 'cache', message: 'loaded from cache', done: hit.files.length, total: hit.files.length });
-        return { meta, files: hit.files, revision: listing.revision, notes: [...notes, 'from cache'], fromCache: true, cacheKey };
+        for (const f of hit.files) session.parsed.set(f.path, f);
+        const missing = now.filter((p) => !session.parsed.has(p));
+        if (missing.length) await session.load(missing, progress);
+        progress({ phase: 'cache', message: 'loaded from cache', done: now.length, total: now.length });
+        const deferred = session.paths().filter((p) => !session.parsed.has(p));
+        return { meta, files: session.files(), revision: listing.revision, notes: [...notes, 'from cache'], fromCache: true, cacheKey, session, deferred };
       }
     } catch (e) { /* cache unavailable */ }
   }
 
-  const list = listing.files;
-  const total = list.length;
-  progress({ phase: 'fetch', done: 0, total });
-  const entries = await mapLimit(list, concurrency, async (f) => {
-    if (f.target) {
-      // manifest symlink: data comes from the target
-      return { path: f.path, linkText: relativeTo(f.path, f.target) };
-    }
-    try {
-      const bytes = await fetchBytes(fetchFn, fileUrl(f));
-      if (f.link) return { path: f.path, linkText: decodeText(bytes).text.trim() };
-      return { path: f.path, bytes };
-    } catch (e) {
-      return { path: f.path, error: e.message || String(e) };
-    }
-  }, (done) => progress({ phase: 'fetch', done, total }));
-  // manifest links may point to files not listed: fetch them
-  const have = new Set(entries.filter((e) => e.bytes).map((e) => e.path));
-  const missing = list.filter((f) => f.target && !have.has(f.target)).map((f) => f.target);
-  if (missing.length) {
-    const extra = await mapLimit([...new Set(missing)], concurrency, async (p) => {
-      try { return { path: p, bytes: await fetchBytes(fetchFn, fileUrl({ repoPath: p })) }; } catch (e) { return null; }
-    });
-    for (const e of extra) if (e) entries.push({ ...e, hiddenTarget: true });
-  }
-  progress({ phase: 'parse', message: 'parsing YAML' });
-  let files = parseEntries(entries, yaml);
-  const hidden = new Set(entries.filter((e) => e.hiddenTarget).map((e) => e.path));
-  if (hidden.size) files = files.filter((f) => !hidden.has(f.path) || list.some((l) => l.path === f.path));
+  progress({ phase: 'fetch', done: 0, total: now.length });
+  await session.load(now, progress);
+  const files = session.files();
   if (opts.cache) {
     try { await opts.cache.set(cacheKey, { files, savedAt: Date.now() }); } catch (e) { /* ignore quota errors */ }
   }
-  return { meta, files, revision: listing.revision, notes, cacheKey };
+  const deferred = session.paths().filter((p) => !session.parsed.has(p));
+  if (session.stats.bundle) notes.push(`${session.stats.bundle} file(s) from the bundle, ${session.stats.cache} from the cache, ${session.stats.fetched} downloaded`);
+  return { meta, files, revision: listing.revision, notes, cacheKey, session, deferred };
+}
+
+/** Save the files a session loaded since (deferred files) in the source cache. */
+export async function saveSourceCache(cache, src) {
+  if (!cache || !src || !src.session || !src.cacheKey) return;
+  try { await cache.set(src.cacheKey, { files: src.session.files(), savedAt: Date.now() }); } catch (e) { /* ignore */ }
 }
 
 /** relative path from a link's directory to a target (both repo paths) */

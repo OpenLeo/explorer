@@ -151,6 +151,137 @@ function normalizeDiagEcu(d) {
  * Build the database.
  * @param {Array} sources parsed sources, the first one has priority
  */
+const DEFERRED_KIND = { diag_did: 'dids', diag_lid: 'lids', diag_routine: 'routines', diag_ioctl: 'ioctls', diag_dtcs: 'dtcs' };
+
+function diagEcu(db, sid, c) {
+  const k = diagEcuKey(c.archvar, c.node, c.model);
+  if (!db.diag.ecus.has(k)) {
+    db.diag.ecus.set(k, {
+      key: k, archvar: c.archvar, node: c.node, model: c.model || null, ecu: null, dids: [], lids: [], dtcs: [], routines: [], ioctls: [], source: sid,
+      deferred: [], pending: { dids: 0, lids: 0, routines: 0, ioctls: 0, dtcs: 0 }, applied: new Set(),
+    });
+  }
+  return db.diag.ecus.get(k);
+}
+
+function sortDiag(e) { for (const l of [e.dids, e.lids, e.routines, e.ioctls]) l.sort((a, b) => a.ident - b.ident); }
+
+/** Add one parsed diag/ file to the database (at build time, or when it is loaded later). */
+function addDiagFile(db, sid, f, c) {
+  if (!isObj(f.data)) return;
+  if (c.kind === 'diag_protocol') {
+    if (!db.diag.protocols.has(c.name)) db.diag.protocols.set(c.name, { ...normalizeProtocol(c.name, f.data), source: sid });
+    return;
+  }
+  const e = diagEcu(db, sid, c);
+  if (e.applied.has(f.path)) return;
+  e.applied.add(f.path);
+  if (c.kind === 'diag_ecu') { if (!e.ecu) e.ecu = normalizeDiagEcu(f.data); }
+  else if (c.kind === 'diag_dtcs') {
+    // 'failure_types' at the top: shared by the codes that have none of their own ({} = no failure type)
+    const shared = normalizeValues(f.data.failure_types, [], '');
+    for (const [code, v] of Object.entries(f.data)) {
+      if (code === 'failure_types') continue;
+      const vd = isObj(v) ? v : { display_name: v };
+      const r = dtcToRaw(code);
+      const dtc = {
+        code, raw: vd.raw ? parseInt(String(vd.raw), 16) : (r ? r.raw : null), displayName: toMl(vd.display_name),
+        comment: toMl(vd.comment), clues: toMl(vd.clues), variants: asArray(vd.variants).map(String),
+        failureTypes: vd.failure_types !== undefined && vd.failure_types !== null ? normalizeValues(vd.failure_types, [], '') : shared,
+        archvar: c.archvar, node: c.node, model: c.model || null, source: sid,
+      };
+      e.dtcs.push(dtc);
+      db.diag.dtcIndex.push(dtc);
+    }
+  } else {
+    const kind = { diag_did: 'did', diag_lid: 'lid', diag_routine: 'routine', diag_ioctl: 'ioctl' }[c.kind];
+    const item = normalizeDiagData(f.data, kind);
+    item.path = f.path; item.source = sid; item.archvar = c.archvar; item.node = c.node; item.model = c.model || null;
+    item.fileBase = c.file.replace(/\.ya?ml$/i, '');
+    const list = { did: e.dids, lid: e.lids, routine: e.routines, ioctl: e.ioctls }[kind];
+    if (!list.some((x) => x.fileBase === item.fileBase)) list.push(item);
+  }
+}
+
+/** Number of documented items of a kind ('dids', 'lids', 'routines', 'ioctls', 'dtcs') of an ECU, counting the files
+ * not loaded yet; null for fault codes not loaded yet (their count is only known once read). */
+export function diagCount(e, kind) {
+  if (!e) return 0;
+  const loaded = (e[kind] || []).length;
+  const pending = (e.pending && e.pending[kind]) || 0;
+  if (kind === 'dtcs') return pending ? null : loaded;
+  return loaded + pending;
+}
+
+/** true while some diagnostic files of the database (or of one ECU, or of one kind) are not loaded */
+export function diagPending(db, e = null, kind = null) {
+  const ecus = e ? [e] : (db && db.diag ? [...db.diag.ecus.values()] : []);
+  return ecus.some((x) => (x.deferred || []).some((r) => !kind || r.kind === kind));
+}
+
+/** Load deferred diag files: refs [{sid, path, kind}] of the ECUs, in source order. */
+async function loadRefs(db, refs, onProgress) {
+  if (!refs.length) return 0;
+  const order = db.sources.map((s) => s.id);
+  const bySid = new Map();
+  for (const r of refs) { if (!bySid.has(r.sid)) bySid.set(r.sid, []); bySid.get(r.sid).push(r.path); }
+  let n = 0;
+  for (const sid of order) {
+    const paths = bySid.get(sid);
+    const session = db.sessions && db.sessions.get(sid);
+    if (!paths || !session) continue;
+    const files = await session.load(paths, onProgress);
+    for (const f of files) {
+      const c = classify(f.path);
+      if (!c) continue;
+      for (const it of f.issues || []) issue(db, sid, f.path, it.level, it.msg, it.line ? `line ${it.line}` : '');
+      addDiagFile(db, sid, f, c);
+      n++;
+    }
+  }
+  const done = new Set(refs.map((r) => `${r.sid}|${r.path}`));
+  for (const e of db.diag.ecus.values()) {
+    if (!e.deferred || !e.deferred.length) continue;
+    const before = e.deferred.length;
+    e.deferred = e.deferred.filter((r) => !done.has(`${r.sid}|${r.path}`));
+    if (e.deferred.length !== before) {
+      e.pending = { dids: 0, lids: 0, routines: 0, ioctls: 0, dtcs: 0 };
+      for (const r of e.deferred) e.pending[r.kind]++;
+      sortDiag(e);
+    }
+  }
+  db.diag.version = (db.diag.version || 0) + 1;
+  return n;
+}
+
+/** Load the diagnostic files of one ECU (diag ECU key). Same promise while loading. */
+export function ensureEcuDiag(db, key, onProgress) {
+  const e = db && db.diag.ecus.get(key);
+  if (!e || !e.deferred || !e.deferred.length) return Promise.resolve(0);
+  if (!e.loading) e.loading = loadRefs(db, [...e.deferred], onProgress).finally(() => { e.loading = null; });
+  return e.loading;
+}
+
+/** Load every fault code table (DTC lookup). */
+export function ensureDtcs(db, onProgress) {
+  if (!db || !diagPending(db, null, 'dtcs')) return Promise.resolve(0);
+  if (!db.diag.dtcLoading) {
+    const refs = [...db.diag.ecus.values()].flatMap((e) => (e.deferred || []).filter((r) => r.kind === 'dtcs'));
+    db.diag.dtcLoading = loadRefs(db, refs, onProgress).finally(() => { db.diag.dtcLoading = null; });
+  }
+  return db.diag.dtcLoading;
+}
+
+/** Load every deferred diagnostic file (background loading, global search). */
+export function ensureAllDiag(db, onProgress) {
+  if (!db || !diagPending(db)) return Promise.resolve(0);
+  if (!db.diag.allLoading) {
+    const refs = [...db.diag.ecus.values()].flatMap((e) => e.deferred || []);
+    db.diag.allLoading = loadRefs(db, refs, onProgress).finally(() => { db.diag.allLoading = null; });
+  }
+  return db.diag.allLoading;
+}
+
 export function buildDatabase(sources) {
   const db = {
     sources: sources.map((s) => s.meta),
@@ -349,44 +480,22 @@ export function buildDatabase(sources) {
         db.frames.push(fr);
         continue;
       }
-      if (c.kind.startsWith('diag_')) {
-        if (!isObj(f.data)) continue;
-        if (c.kind === 'diag_protocol') {
-          if (!db.diag.protocols.has(c.name)) db.diag.protocols.set(c.name, { ...normalizeProtocol(c.name, f.data), source: sid });
-          continue;
-        }
-        const k = diagEcuKey(c.archvar, c.node, c.model);
-        if (!db.diag.ecus.has(k)) db.diag.ecus.set(k, { key: k, archvar: c.archvar, node: c.node, model: c.model || null, ecu: null, dids: [], lids: [], dtcs: [], routines: [], ioctls: [], source: sid });
-        const e = db.diag.ecus.get(k);
-        if (c.kind === 'diag_ecu') { if (!e.ecu) e.ecu = normalizeDiagEcu(f.data); }
-        else if (c.kind === 'diag_dtcs') {
-          // 'failure_types' at the top: shared by the codes that have none of their own ({} = no failure type)
-          const shared = normalizeValues(f.data.failure_types, [], '');
-          for (const [code, v] of Object.entries(f.data)) {
-            if (code === 'failure_types') continue;
-            const vd = isObj(v) ? v : { display_name: v };
-            const r = dtcToRaw(code);
-            const dtc = {
-              code, raw: vd.raw ? parseInt(String(vd.raw), 16) : (r ? r.raw : null), displayName: toMl(vd.display_name),
-              comment: toMl(vd.comment), clues: toMl(vd.clues), variants: asArray(vd.variants).map(String),
-              failureTypes: vd.failure_types !== undefined && vd.failure_types !== null ? normalizeValues(vd.failure_types, [], '') : shared,
-              archvar: c.archvar, node: c.node, model: c.model || null, source: sid,
-            };
-            e.dtcs.push(dtc);
-            db.diag.dtcIndex.push(dtc);
-          }
-        } else {
-          const kind = { diag_did: 'did', diag_lid: 'lid', diag_routine: 'routine', diag_ioctl: 'ioctl' }[c.kind];
-          const item = normalizeDiagData(f.data, kind);
-          item.path = f.path; item.source = sid; item.archvar = c.archvar; item.node = c.node; item.model = c.model || null;
-          item.fileBase = c.file.replace(/\.ya?ml$/i, '');
-          const list = { did: e.dids, lid: e.lids, routine: e.routines, ioctl: e.ioctls }[kind];
-          if (!list.some((x) => x.fileBase === item.fileBase)) list.push(item);
-        }
-      }
+      if (c.kind.startsWith('diag_')) addDiagFile(db, sid, f, c);
     }
   }
-  for (const e of db.diag.ecus.values()) for (const l of [e.dids, e.lids, e.routines, e.ioctls]) l.sort((a, b) => a.ident - b.ident);
+  // diagnostic files not loaded yet (loadSource defer): ECU stubs with the count of files per kind
+  db.sessions = new Map();
+  for (const src of sources) {
+    if (src.session) db.sessions.set(src.meta.id, src.session);
+    for (const p of src.deferred || []) {
+      const c = classify(p);
+      if (!c || !DEFERRED_KIND[c.kind]) continue;
+      const e = diagEcu(db, src.meta.id, c);
+      e.deferred.push({ sid: src.meta.id, path: p, kind: DEFERRED_KIND[c.kind] });
+      e.pending[DEFERRED_KIND[c.kind]]++;
+    }
+  }
+  for (const e of db.diag.ecus.values()) sortDiag(e);
 
   // 3. frames by key, primary frames, sources per key
   const order = new Map(sources.map((s, i) => [s.meta.id, i]));

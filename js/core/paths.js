@@ -75,3 +75,11 @@ export function isRelevant(path) {
   const c = classify(path);
   return !!c && c.kind !== 'diag_unknown';
 }
+
+const DEFERRED_KINDS = new Set(['diag_did', 'diag_lid', 'diag_routine', 'diag_ioctl', 'diag_dtcs']);
+
+/** Diagnostic data loaded when needed (an ECU page, the DTC lookup): everything in diag/ but ecu.yml and protocols. */
+export function isDeferred(path) {
+  const c = classify(path);
+  return !!c && DEFERRED_KINDS.has(c.kind);
+}
