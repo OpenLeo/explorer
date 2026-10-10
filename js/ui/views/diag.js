@@ -139,8 +139,14 @@ export function renderDiag(root, route) {
     case 'seedkey': body = renderSeedKeyPage(db, route); break;
     default: body = renderOverview(db);
   }
-  setHtml(root, html`<div class="page diag"><h2>Diagnostics</h2>${nav}${body}</div>`);
+  setHtml(root, html`<div class="page diag${sub === 'ecu' ? ' wide' : ''}"><h2>Diagnostics</h2>${nav}${body}</div>`);
   bind(root);
+  if (sub === 'ecu') {
+    const selRow = root.querySelector('#ecu-items .drow.selected');
+    if (selRow) selRow.scrollIntoView({ block: 'nearest' });
+    const det = root.querySelector('#ecu-detail');
+    if (det) det.scrollTop = 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +275,7 @@ function renderAddressing(db, route) {
 const KIND_LABEL = { did: 'DID', lid: 'LID', routine: 'Routine', ioctl: 'I/O control' };
 const KIND_WIDTH = { did: 4, lid: 2, routine: 4, ioctl: 4 };
 
-function itemHref(archvar, node, it) { return `${ecuDiagHref(archvar, node)}?${it.kind}=${hex(it.ident, KIND_WIDTH[it.kind] || 4)}`; }
+function itemHref(archvar, node, it) { return `${ecuDiagHref(archvar, node)}?${it.kind}=${hex(it.ident, KIND_WIDTH[it.kind] || 4)}${it.fileBase ? `&f=${encodeURIComponent(it.fileBase)}` : ''}`; }
 
 function sigsLength(sigs, declared) {
   if (isNum(declared) && declared > 0) return declared;
@@ -378,14 +384,6 @@ function itemDetail(item, archvar, node, route) {
   </div>`;
 }
 
-function itemListTable(items, archvar, node, selected) {
-  if (!items.length) return '';
-  return html`<div class="tablewrap"><table class="tbl compact"><thead><tr><th>ID</th><th>Name</th><th>Display name</th><th>Kind</th><th>Access</th><th>Length</th><th>Params</th></tr></thead><tbody>
-    ${items.map((it) => html`<tr class="${it === selected ? 'hl' : ''}"><td><a class="mono" href="${itemHref(archvar, node, it)}">0x${hex(it.ident, KIND_WIDTH[it.kind] || 4)}</a></td>
-      <td><a class="mono" href="${itemHref(archvar, node, it)}">${it.name}</a></td><td>${t(it.displayName)}</td><td>${it.dataKind || ''}</td><td>${it.access || ''}</td>
-      <td class="num">${isNum(it.length) ? it.length : it.kind === 'did' || it.kind === 'lid' ? 'var' : ''}</td><td class="num">${arr(it.params).length + arr(it.results).length}</td></tr>`)}
-  </tbody></table></div>`;
-}
 
 function modelPicker(archvar, node, models) {
   return html`<h3>${node} <span class="muted">${archvar}</span></h3>
@@ -395,6 +393,46 @@ function modelPicker(archvar, node, models) {
       <td class="small">${arr(e.ecu && e.ecu.cars).join(', ')}</td><td class="num">${arr(e.ecu && e.ecu.variants).length}</td>
       <td class="num">${arr(e.dids).length}</td><td class="num">${arr(e.lids).length}</td><td class="num">${arr(e.dtcs).length}</td><td class="num">${arr(e.routines).length}</td><td class="num">${arr(e.ioctls).length}</td></tr>`)}
     </tbody></table></div>`;
+}
+
+function ecuOverview(db, archvar, node, model, e, nd, addr, protos, ecu, nk) {
+  const dtcs = e ? arr(e.dtcs) : [];
+  return html`<div class="fdetail-inner">
+    <h3>${nodeLink(archvar, node)}${model ? html` <span class="mono">/ ${model}</span>` : ''} <span class="muted">${archvar}</span> ${e ? sourceBadge(e.source) : ''}</h3>
+    ${ecu.displayName ? html`<p><b>${t(ecu.displayName)}</b></p>` : nd ? html`<p class="muted">${t(nd.title)}</p>` : ''}
+    ${ecu.comment ? html`<p>${t(ecu.comment)}</p>` : ''}
+    ${!e ? html`<div class="notice">Only the addressing summary of <code>nodes/${archvar}.yml</code> is known for this ECU (no <code>diag/${archvar}/${node}/</code> directory).</div>` : ''}
+    ${kv([['Protocols', protos.join(', ')], ['Cars', arr(ecu.cars).join(', ')],
+      ['Tester present', ecu.testerPresent ? html`<code>${ecu.testerPresent.request || '3E 00'}</code>${isNum(ecu.testerPresent.period) ? ` every ${ecu.testerPresent.period} ms` : ''}` : null],
+      ['Part number', ecu.identification ? html`<code>${ecu.identification.request}</code> → data bits <code>${ecu.identification.partNumber}</code>${ecu.identification.comment ? html` <span class="small muted">${t(ecu.identification.comment)}</span>` : ''}` : null]])}
+    <div class="two-col">
+      <div>
+        <h4>Addressing</h4>
+        ${addr.length ? html`<table class="tbl compact"><thead><tr><th>Transport</th><th>Bus</th><th>Request</th><th>Response</th><th>K-line</th><th></th></tr></thead><tbody>
+          ${addr.map((r) => html`<tr><td>${r.transport}</td><td class="mono">${r.bus}</td><td>${idCell(r.req, r.archvar, r.bus)}</td><td>${idCell(r.res, r.archvar, r.bus)}</td><td>${isNum(r.kline) ? html`<code>0x${hx(r.kline, 2)}</code>` : ''}</td>
+            <td>${isNum(r.req) ? html`<a class="btn btn-sm" href="#/diag/request?req=${canIdHex(r.req)}&res=${canIdHex(r.res)}&proto=${encodeURIComponent(protos[0] || 'UDS')}">request builder</a>` : ''}</td></tr>`)}</tbody></table>` : html`<p class="muted">No addressing documented.</p>`}
+        ${arr(ecu.sessions).length ? html`<h4>Sessions</h4><table class="tbl compact"><tbody>${arr(ecu.sessions).map((x) => html`<tr><td class="mono">10 ${hx(x.raw, 2)}</td><td>${t(x.text) || UDS_SESSIONS[x.raw] || ''}</td></tr>`)}</tbody></table>` : ''}
+        ${arr(ecu.resets).length ? html`<h4>Resets</h4><table class="tbl compact"><tbody>${arr(ecu.resets).map((x) => html`<tr><td class="mono">11 ${hx(x.raw, 2)}</td><td>${t(x.text)}</td></tr>`)}</tbody></table>` : ''}
+      </div>
+      <div>
+        ${arr(ecu.services).length ? html`<h4>Supported services</h4><table class="tbl compact"><tbody>${arr(ecu.services).map((sid) => html`<tr><td class="mono">0x${hx(sid, 2)}</td><td>${serviceName(db, sid, protos) || html`<span class="muted">unknown</span>`}</td></tr>`)}</tbody></table>` : ''}
+        ${arr(ecu.security).length ? html`<h4>Security access</h4><table class="tbl compact"><thead><tr><th>Level</th><th>Algorithm</th><th>Key</th><th></th></tr></thead><tbody>
+          ${arr(ecu.security).map((x) => html`<tr><td class="mono">27 ${hx(x.level, 2)} / ${isNum(x.level) ? hx(x.level + 1, 2) : ''}</td><td>${x.algorithm || ''}</td><td class="mono">${x.key || ''}</td>
+            <td>${x.key ? html`<a class="btn btn-sm" href="#/diag/seedkey?key=${encodeURIComponent(x.key)}${isNum(x.level) ? `&level=${hx(x.level, 2)}` : ''}">compute key</a>` : ''}</td></tr>`)}</tbody></table>` : ''}
+      </div>
+    </div>
+    ${arr(ecu.variants).length ? html`<details class="card"><summary><b>Software variants</b> <span class="count">${arr(ecu.variants).length}</span></summary>
+      <div class="tablewrap"><table class="tbl compact"><thead><tr><th>Variant</th><th>Part numbers</th><th>Cars</th></tr></thead><tbody>
+      ${arr(ecu.variants).map((v) => html`<tr><td class="mono">${v.id}</td><td class="mono small">${v.parts.join(', ')}</td><td class="small">${v.cars.join(', ')}</td></tr>`)}</tbody></table></div></details>` : ''}
+    ${dtcs.length ? html`<h4>Fault codes <span class="count">${dtcs.length}</span></h4>${dtcTable(dtcs)}` : ''}
+  </div>`;
+}
+
+function itemRow(it, archvar, nk, selected) {
+  const idh = hex(it.ident, KIND_WIDTH[it.kind] || 4);
+  const disp = t(it.displayName);
+  return html`<a class="drow${it === selected ? ' selected' : ''}" href="${itemHref(archvar, nk, it)}" data-kind="${it.kind}"
+    data-text="${`${KIND_LABEL[it.kind]} ${idh} ${it.name} ${disp}`.toLowerCase()}"><span class="dk dk-${it.kind}">${KIND_LABEL[it.kind] || it.kind}</span><span class="mono">${idh}${it.fileBase && /_[A-Z]/.test(it.fileBase) ? html`<small class="muted">${it.fileBase.replace(/^[0-9A-F]+/, '')}</small>` : ''}</span><span class="mono dname" title="${disp}">${it.name}</span></a>`;
 }
 
 function renderEcu(db, archvar, node, route, model = null) {
@@ -412,45 +450,27 @@ function renderEcu(db, archvar, node, route, model = null) {
   if (!e && !addr.length) return html`${emptyState(`No diagnostic data for ${node}`, `Nothing in diag/${archvar}/${node}/ nor a diag block in nodes/${archvar}.yml.`)}<p><a href="#/ecus/${archvar}/${encodeURIComponent(node)}">ECU page</a></p>`;
   const ecu = (e && e.ecu) || {};
   const protos = arr(ecu.protocols).length ? arr(ecu.protocols) : arr(nd && nd.diag && nd.diag.protocols);
-  const all = e ? [...arr(e.dids), ...arr(e.lids), ...arr(e.routines), ...arr(e.ioctls)] : [];
-  let selected = null;
-  for (const k of ['did', 'lid', 'routine', 'ioctl']) {
-    if (route.query[k] !== undefined) { const id = parseHexInt(route.query[k]); selected = all.find((x) => x.kind === k && x.ident === id) || null; }
-  }
-  const dtcs = e ? arr(e.dtcs) : [];
-  return html`<p><a href="#/diag/addressing">← addressing</a></p>
-    <h3>${nodeLink(archvar, node)}${model ? html` <a class="mono" href="${ecuDiagHref(archvar, node)}">/</a> <span class="mono">${model}</span>` : ''} <span class="muted">${archvar}</span> ${nd ? html`<span class="muted">${t(nd.title)}</span>` : ''} ${e ? sourceBadge(e.source) : ''}</h3>
-    ${ecu.displayName ? html`<p><b>${t(ecu.displayName)}</b></p>` : ''}
-    ${ecu.comment ? html`<p>${t(ecu.comment)}</p>` : ''}
-    ${ecu.identification || arr(ecu.cars).length ? kv([['Cars', arr(ecu.cars).join(', ')],
-      ['Part number', ecu.identification ? html`<code>${ecu.identification.request}</code> → data bits <code>${ecu.identification.partNumber}</code>${ecu.identification.comment ? html` <span class="small muted">${t(ecu.identification.comment)}</span>` : ''}` : null]]) : ''}
-    ${arr(ecu.variants).length ? html`<details class="card"><summary><b>Software variants</b> <span class="count">${arr(ecu.variants).length}</span></summary>
-      <div class="tablewrap"><table class="tbl compact"><thead><tr><th>Variant</th><th>Part numbers</th><th>Cars</th></tr></thead><tbody>
-      ${arr(ecu.variants).map((v) => html`<tr><td class="mono">${v.id}</td><td class="mono small">${v.parts.join(', ')}</td><td class="small">${v.cars.join(', ')}</td></tr>`)}</tbody></table></div></details>` : ''}
-    ${!e ? html`<div class="notice">Only the addressing summary of <code>nodes/${archvar}.yml</code> is known for this ECU (no <code>diag/${archvar}/${node}/</code> directory).</div>` : ''}
-    <div class="two-col">
-      <div>
-        ${kv([['Protocols', protos.join(', ')], ['Tester present', ecu.testerPresent ? html`<code>${ecu.testerPresent.request || '3E 00'}</code>${isNum(ecu.testerPresent.period) ? ` every ${ecu.testerPresent.period} ms` : ''}` : null]])}
-        <h4>Addressing</h4>
-        ${addr.length ? html`<table class="tbl compact"><thead><tr><th>Transport</th><th>Bus</th><th>Request</th><th>Response</th><th>Functional</th><th>K-line</th><th></th></tr></thead><tbody>
-          ${addr.map((r) => html`<tr><td>${r.transport}</td><td class="mono">${r.bus}</td><td>${idCell(r.req, r.archvar, r.bus)}</td><td>${idCell(r.res, r.archvar, r.bus)}</td><td>${idCell(r.func, r.archvar, r.bus)}</td><td>${isNum(r.kline) ? html`<code>0x${hx(r.kline, 2)}</code>` : ''}</td>
-            <td>${isNum(r.req) ? html`<a class="btn btn-sm" href="#/diag/request?req=${canIdHex(r.req)}&res=${canIdHex(r.res)}&proto=${encodeURIComponent(protos[0] || 'UDS')}">request builder</a>` : ''}</td></tr>`)}</tbody></table>` : html`<p class="muted">No addressing documented.</p>`}
-        ${arr(ecu.sessions).length ? html`<h4>Sessions</h4><table class="tbl compact"><tbody>${arr(ecu.sessions).map((s) => html`<tr><td class="mono">10 ${hx(s.raw, 2)}</td><td>${t(s.text) || UDS_SESSIONS[s.raw] || ''}</td></tr>`)}</tbody></table>` : ''}
-        ${arr(ecu.resets).length ? html`<h4>Resets</h4><table class="tbl compact"><tbody>${arr(ecu.resets).map((s) => html`<tr><td class="mono">11 ${hx(s.raw, 2)}</td><td>${t(s.text)}</td></tr>`)}</tbody></table>` : ''}
-      </div>
-      <div>
-        ${arr(ecu.services).length ? html`<h4>Supported services</h4><table class="tbl compact"><tbody>${arr(ecu.services).map((sid) => html`<tr><td class="mono">0x${hx(sid, 2)}</td><td>${serviceName(db, sid, protos) || html`<span class="muted">unknown</span>`}</td></tr>`)}</tbody></table>` : ''}
-        ${arr(ecu.security).length ? html`<h4>Security access</h4><table class="tbl compact"><thead><tr><th>Level</th><th>Algorithm</th><th>Key</th><th>Comment</th><th></th></tr></thead><tbody>
-          ${arr(ecu.security).map((s) => html`<tr><td class="mono">27 ${hx(s.level, 2)} / ${isNum(s.level) ? hx(s.level + 1, 2) : ''}</td><td>${s.algorithm || ''}</td><td class="mono">${s.key || ''}</td><td class="small">${t(s.comment)}</td>
-            <td>${s.key ? html`<a class="btn btn-sm" href="#/diag/seedkey?key=${encodeURIComponent(s.key)}${isNum(s.level) ? `&level=${hx(s.level, 2)}` : ''}">compute key</a>` : ''}</td></tr>`)}</tbody></table>` : ''}
-      </div>
-    </div>
-    ${selected ? itemDetail(selected, archvar, nk, route) : ''}
-    ${e && arr(e.dids).length ? html`<h3>DIDs <span class="count">${arr(e.dids).length}</span></h3>${itemListTable(arr(e.dids), archvar, nk, selected)}` : ''}
-    ${e && arr(e.lids).length ? html`<h3>LIDs <span class="count">${arr(e.lids).length}</span></h3>${itemListTable(arr(e.lids), archvar, nk, selected)}` : ''}
-    ${e && arr(e.routines).length ? html`<h3>Routines <span class="count">${arr(e.routines).length}</span></h3>${itemListTable(arr(e.routines), archvar, nk, selected)}` : ''}
-    ${e && arr(e.ioctls).length ? html`<h3>I/O controls <span class="count">${arr(e.ioctls).length}</span></h3>${itemListTable(arr(e.ioctls), archvar, nk, selected)}` : ''}
-    ${dtcs.length ? html`<h3>DTCs <span class="count">${dtcs.length}</span></h3>${dtcTable(dtcs)}` : ''}`;
+  const groups = e ? [['did', arr(e.dids)], ['lid', arr(e.lids)], ['routine', arr(e.routines)], ['ioctl', arr(e.ioctls)]].filter((g) => g[1].length) : [];
+  const all = groups.flatMap((g) => g[1]);
+  const selected = findItem(all, route.query);
+  const siblings = model ? diagEcusOfNode(db, archvar, node).filter((x) => x.model).sort((a, b) => naturalCompare(a.model, b.model)) : [];
+  const detail = selected ? html`<div class="fdetail-inner"><p class="small"><a href="${ecuDiagHref(archvar, nk)}">← ${node}${model ? ` ${model}` : ''} overview</a></p>${itemDetail(selected, archvar, nk, route)}</div>`
+    : ecuOverview(db, archvar, node, model, e, nd, addr, protos, ecu, nk);
+  return html`<p class="small"><a href="#/diag/addressing">← addressing</a> · ${nodeLink(archvar, node)}${model ? html` · <b class="mono">${model}</b>` : ''} · ${archvar}</p>
+    <div class="frames-layout has-detail diag-layout">
+      <aside class="sidebar">
+        <h4 class="mono">${node}${model ? html`<br><small>${model}</small>` : ''}</h4>
+        ${ecu.displayName ? html`<p class="small">${t(ecu.displayName)}</p>` : ''}
+        <p class="small"><a href="${ecuDiagHref(archvar, nk)}">Overview</a> (addressing, sessions, variants${arr(e && e.dtcs).length ? `, ${arr(e.dtcs).length} fault codes` : ''})</p>
+        <label class="small">Search<input type="search" id="ecu-q" data-live="ecu-filter" placeholder="ID, name, description…"></label>
+        <div class="small">${groups.map(([k, l]) => html`<label class="chk"><input type="checkbox" data-live="ecu-filter" data-kind="${k}" checked> ${KIND_LABEL[k]}s <span class="count">${l.length}</span></label>`)}</div>
+        ${siblings.length > 1 ? html`<h4>Other models</h4><ul class="plain small">${siblings.filter((x) => x.model !== model).map((x) => html`<li><a class="mono" href="${ecuDiagHref(archvar, ecuRef(x))}">${x.model}</a></li>`)}</ul>` : ''}
+      </aside>
+      <section class="flist"><div class="flist-body" id="ecu-items">
+        ${all.length ? groups.map(([k, l]) => html`<div class="dgroup" data-kind="${k}">${KIND_LABEL[k]}s <span class="count">${l.length}</span></div>${l.map((it) => itemRow(it, archvar, nk, selected))}`) : html`<p class="muted" style="padding:10px">No identifiers documented.</p>`}
+      </div></section>
+      <section class="fdetail" id="ecu-detail">${detail}</section>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -710,15 +730,22 @@ function renderSeedKeyPage(db, route) {
 // events
 // ---------------------------------------------------------------------------
 
-function currentItem(db, route) {
-  if (!route || route.parts[1] !== 'ecu') return null;
-  const e = diagOf(db).ecus.get(`${route.parts[2]}/${route.parts[3]}`);
-  if (!e) return null;
-  const all = [...arr(e.dids), ...arr(e.lids), ...arr(e.routines), ...arr(e.ioctls)];
+function findItem(all, query) {
   for (const k of ['did', 'lid', 'routine', 'ioctl']) {
-    if (route.query[k] !== undefined) { const id = parseHexInt(route.query[k]); const it = all.find((x) => x.kind === k && x.ident === id); if (it) return { item: it, archvar: route.parts[2] }; }
+    if (query[k] === undefined) continue;
+    const id = parseHexInt(query[k]);
+    const cands = all.filter((x) => x.kind === k && x.ident === id);
+    return cands.find((x) => query.f && x.fileBase === query.f) || cands[0] || null;
   }
   return null;
+}
+
+function currentItem(db, route) {
+  if (!route || route.parts[1] !== 'ecu') return null;
+  const e = diagOf(db).ecus.get(diagEcuKey(route.parts[2], route.parts[3], route.parts[4] || null));
+  if (!e) return null;
+  const it = findItem([...arr(e.dids), ...arr(e.lids), ...arr(e.routines), ...arr(e.ioctls)], route.query);
+  return it ? { item: it, archvar: route.parts[2] } : null;
 }
 
 function bind(root) {
@@ -740,6 +767,11 @@ function bind(root) {
     } else if (kind === 'dtc') {
       setHtml($('#dtc-out', root), dtcResults(db, el.value));
       replaceHash(`#/diag/dtc${el.value ? '?q=' + encodeURIComponent(el.value) : ''}`);
+    } else if (kind === 'ecu-filter') {
+      const q = (($('#ecu-q', root) || {}).value || '').trim().toLowerCase();
+      const on = new Set($$('input[type=checkbox][data-live=ecu-filter]', root).filter((c) => c.checked).map((c) => c.dataset.kind));
+      for (const r of $$('#ecu-items .drow', root)) r.style.display = on.has(r.dataset.kind) && (!q || r.dataset.text.includes(q)) ? '' : 'none';
+      for (const g of $$('#ecu-items .dgroup', root)) g.style.display = on.has(g.dataset.kind) ? '' : 'none';
     } else if (kind === 'didDecode') {
       const c = currentItem(db, cur.route);
       if (c) setHtml($('#dd-out', root), decodeTable(c.item, c.archvar, el.dataset.which || 'params', el.value));

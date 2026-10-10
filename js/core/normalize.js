@@ -567,6 +567,8 @@ export function normalizeCar(project, raw) {
         comment: toMl(vd.comment),
         nodes,
         optional: asArray(vd.optional_nodes).map(String),
+        buses: asArray(vd.buses).map(String),
+        ecuModels: isObj(vd.ecu_models) ? Object.entries(vd.ecu_models).map(([n, l]) => ({ node: String(n), models: asArray(l).map(String) })) : [],
       });
     }
   } else issues.push(W('warning', 'missing versions'));

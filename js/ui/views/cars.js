@@ -4,7 +4,7 @@ import { html, $, on, setHtml } from '../dom.js';
 import { app } from '../state.js';
 import { store } from '../../core/cache.js';
 import { t, emptyState, nodeLink, frameLink, periodText, sourceBadge, busLabel } from '../widgets.js';
-import { framesForCarVersion } from '../../core/repo.js';
+import { framesForCarVersion, diagEcuHref } from '../../core/repo.js';
 import { naturalCompare } from '../../core/util.js';
 
 let filt = { q: '', brand: '', arch: '', ...(store.get('carFilters', {}) || {}) };
@@ -84,6 +84,9 @@ function renderCar(root, project) {
       ${v.architecture !== 'none' && !archOk ? html`<p class="muted">Architecture <span class="mono">${v.architecture}</span> is not documented (partner platform or not defined in architectures.yml).</p>` : ''}
       ${nodesByNet.length ? html`<h4>ECUs per network</h4><div class="tablewrap"><table class="tbl compact"><tbody>${nodesByNet.map(([net, list]) => html`<tr><td class="mono"><b>${net}</b></td><td>${list.map((n, i) => html`${i ? ', ' : ''}${archOk ? nodeLink(v.architecture, n) : n}${v.optional.includes(n) ? html`<sup title="optional: depends on trim/options">opt</sup>` : ''}`)}</td></tr>`)}</tbody></table></div>
         ${v.optional.length ? html`<p class="small muted"><sup>opt</sup> = optional ECU (depends on trim / options).</p>` : ''}` : archOk ? html`<p class="muted">The ECU list of this car is not documented yet${archOk ? ': all frames of the architecture are listed below.' : '.'}</p>` : ''}
+      ${arr0(v.buses).length ? html`<p class="small">Buses: ${v.buses.map((b, i) => html`${i ? ', ' : ''}<span class="mono">${archOk ? busLabel(v.architecture, b) : b}</span>`)}</p>` : ''}
+      ${arr0(v.ecuModels).length ? html`<details><summary><b>ECU models</b> <span class="count">${v.ecuModels.reduce((a, x) => a + x.models.length, 0)}</span> <span class="small muted">(from the diagnostic data)</span></summary>
+        <div class="tablewrap"><table class="tbl compact"><tbody>${v.ecuModels.map((x) => html`<tr><td class="mono"><b>${x.node}</b></td><td class="small">${x.models.map((m, i) => { const e = modelEntry(db, x.node, m); return html`${i ? ', ' : ''}${e ? html`<a class="mono" href="${diagEcuHref(e.archvar, e.node, e.model)}">${m}</a>` : html`<span class="mono">${m}</span>`}`; })}</td></tr>`)}</tbody></table></div></details>` : ''}
       ${archOk ? html`<h4>Frames you should see on this car ${html`<span class="count">${frames.length}</span>`}</h4>
         <p class="small muted">${filtered ? 'Frames of the architecture whose sender is fitted on this car (optional ECUs included).' : 'All frames of the architecture (the fitted ECUs are unknown).'}</p>
         ${[...byBus.entries()].sort((a, b) => naturalCompare(a[0], b[0])).map(([bus, list]) => html`<details ${byBus.size <= 2 ? 'open' : ''}><summary><b class="mono">${busLabel(v.architecture, bus)}</b> <span class="count">${list.length}</span></summary>
@@ -103,4 +106,12 @@ function renderCar(root, project) {
 export function renderCars(root, route) {
   if (route.parts[1]) renderCar(root, route.parts[1]);
   else renderList(root);
+}
+
+const arr0 = (v) => (Array.isArray(v) ? v : []);
+
+/** diag ECU entry of a model (any architecture), for the links of the car ECU models */
+function modelEntry(db, node, model) {
+  for (const e of (db.diag && db.diag.ecus.values()) || []) if (e.node === node && e.model === model) return e;
+  return null;
 }
