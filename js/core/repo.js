@@ -78,6 +78,21 @@ function normalizeProtocol(name, d) {
   };
 }
 
+/** Key of a diag ECU entry: <archvar>/<node> or <archvar>/<node>/<model> */
+export function diagEcuKey(archvar, node, model) { return model ? `${archvar}/${node}/${model}` : `${archvar}/${node}`; }
+
+/** Route of the diagnostic page of an ECU (model optional) */
+export function diagEcuHref(archvar, node, model) {
+  return `#/diag/ecu/${archvar}/${encodeURIComponent(node)}${model ? `/${encodeURIComponent(model)}` : ''}`;
+}
+
+/** Every diag ECU entry of a node (the node directory itself and its models) */
+export function diagEcusOfNode(db, archvar, node) {
+  const out = [];
+  for (const e of (db && db.diag && db.diag.ecus.values()) || []) if (e.archvar === archvar && e.node === node) out.push(e);
+  return out;
+}
+
 function normalizeDiagData(d, kind) {
   const issues = [];
   const length = d.length === null ? null : parseIntLoose(d.length);
@@ -92,6 +107,17 @@ function normalizeDiagData(d, kind) {
     results: normalizeSignals(d.results, undefined, issues),
     returnValues: normalizeValues(d.return_values, issues, ''),
     control: asArray(d.control).map(String),
+    service: parseIntLoose(d.service),
+    controls: normalizeValues(d.controls, issues, ''),
+    mapped: isObj(d.mapped) && isObj(d.mapped.params) ? Object.entries(d.mapped.params).map(([n, m]) => ({
+      name: n, index: isObj(m) ? parseIntLoose(m.index) : null, length: isObj(m) ? parseIntLoose(m.length) : null,
+      type: isObj(m) && m.type ? String(m.type) : '', comment: toMl(isObj(m) ? m.comment : null),
+      values: isObj(m) ? normalizeValues(m.values, [], '') : [] })) : [],
+    mappedComment: isObj(d.mapped) ? toMl(d.mapped.comment) : null,
+    alternatives: asArray(d.alternatives).filter(isObj).map((a) => ({
+      note: toMl(a.note), variants: asArray(a.variants).map(String), access: a.access ? String(a.access) : null,
+      length: a.length === null ? null : parseIntLoose(a.length), params: normalizeSignals(a.params, undefined, issues) })),
+    tests: asArray(d.tests).filter(isObj).map((x) => ({ displayName: toMl(x.display_name), maxMs: parseIntLoose(x.max_duration_ms) })),
     issues,
   };
 }
@@ -114,6 +140,10 @@ function normalizeDiagEcu(d) {
     services: asArray(d.services).map((x) => parseIntLoose(x)).filter((x) => x !== null),
     security: asArray(d.security_access).filter(isObj).map((s) => ({ level: parseIntLoose(s.level), algorithm: s.algorithm ? String(s.algorithm) : null, key: s.key ? String(s.key) : null, comment: toMl(s.comment) })),
     testerPresent: isObj(d.tester_present) ? { request: d.tester_present.request || '', period: d.tester_present.period_ms ?? null } : null,
+    model: d.model ? String(d.model) : null, displayName: toMl(d.display_name), cars: asArray(d.cars).map(String),
+    identification: isObj(d.identification) ? { request: d.identification.request ? String(d.identification.request) : '',
+      partNumber: d.identification.part_number ? String(d.identification.part_number) : '', comment: toMl(d.identification.comment) } : null,
+    variants: isObj(d.variants) ? Object.entries(d.variants).map(([id, v]) => ({ id, parts: asArray(isObj(v) ? v.parts : null).map(String), cars: asArray(isObj(v) ? v.cars : null).map(String) })) : [],
   };
 }
 
@@ -325,8 +355,8 @@ export function buildDatabase(sources) {
           if (!db.diag.protocols.has(c.name)) db.diag.protocols.set(c.name, { ...normalizeProtocol(c.name, f.data), source: sid });
           continue;
         }
-        const k = `${c.archvar}/${c.node}`;
-        if (!db.diag.ecus.has(k)) db.diag.ecus.set(k, { archvar: c.archvar, node: c.node, ecu: null, dids: [], lids: [], dtcs: [], routines: [], ioctls: [], source: sid });
+        const k = diagEcuKey(c.archvar, c.node, c.model);
+        if (!db.diag.ecus.has(k)) db.diag.ecus.set(k, { key: k, archvar: c.archvar, node: c.node, model: c.model || null, ecu: null, dids: [], lids: [], dtcs: [], routines: [], ioctls: [], source: sid });
         const e = db.diag.ecus.get(k);
         if (c.kind === 'diag_ecu') { if (!e.ecu) e.ecu = normalizeDiagEcu(f.data); }
         else if (c.kind === 'diag_dtcs') {
@@ -336,7 +366,7 @@ export function buildDatabase(sources) {
             const dtc = {
               code, raw: vd.raw ? parseInt(String(vd.raw), 16) : (r ? r.raw : null), displayName: toMl(vd.display_name),
               comment: toMl(vd.comment), clues: toMl(vd.clues), variants: asArray(vd.variants).map(String),
-              archvar: c.archvar, node: c.node, source: sid,
+              archvar: c.archvar, node: c.node, model: c.model || null, source: sid,
             };
             e.dtcs.push(dtc);
             db.diag.dtcIndex.push(dtc);
@@ -344,9 +374,10 @@ export function buildDatabase(sources) {
         } else {
           const kind = { diag_did: 'did', diag_lid: 'lid', diag_routine: 'routine', diag_ioctl: 'ioctl' }[c.kind];
           const item = normalizeDiagData(f.data, kind);
-          item.path = f.path; item.source = sid; item.archvar = c.archvar; item.node = c.node;
+          item.path = f.path; item.source = sid; item.archvar = c.archvar; item.node = c.node; item.model = c.model || null;
+          item.fileBase = c.file.replace(/\.ya?ml$/i, '');
           const list = { did: e.dids, lid: e.lids, routine: e.routines, ioctl: e.ioctls }[kind];
-          if (!list.some((x) => x.ident === item.ident)) list.push(item);
+          if (!list.some((x) => x.fileBase === item.fileBase)) list.push(item);
         }
       }
     }
@@ -641,7 +672,7 @@ function buildSearchIndex(db) {
   }
   for (const e of db.diag.ecus.values()) {
     for (const d of [...e.dids, ...e.lids]) {
-      idx.push({ kind: d.kind, label: `${hex(d.ident, d.kind === 'did' ? 4 : 2)} ${d.name}`, sub: `${e.node} · ${e.archvar}`, route: `#/diag/ecu/${e.archvar}/${encodeURIComponent(e.node)}?${d.kind}=${hex(d.ident)}`, text: `${hex(d.ident, 4)} ${d.name}`.toLowerCase() });
+      idx.push({ kind: d.kind, label: `${hex(d.ident, d.kind === 'did' ? 4 : 2)} ${d.name}`, sub: `${e.node}${e.model ? ` ${e.model}` : ''} · ${e.archvar}`, route: `${diagEcuHref(e.archvar, e.node, e.model)}?${d.kind}=${hex(d.ident)}`, text: `${hex(d.ident, 4)} ${d.name}`.toLowerCase() });
     }
   }
   return idx;

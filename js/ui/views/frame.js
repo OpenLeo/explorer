@@ -14,7 +14,7 @@ import { applyFrameAlternative, applySignalAlternative, activeSignals } from '..
 import { dbcMotorolaStart, motorolaLsbStart, describePos } from '../../core/bits.js';
 import { decodeFrame, encodeFrame, physToRaw, rawToPhys, defaultRaw, FLAG_TEXT, maxRaw } from '../../core/codec.js';
 import { genC, genPython, genDbcSnippet, txSnippets } from '../../core/codegen.js';
-import { sameFrameElsewhere, frameRoute } from '../../core/repo.js';
+import { sameFrameElsewhere, frameRoute, diagEcusOfNode } from '../../core/repo.js';
 import { hex, fmtNum, parseHexBytes, bytesToHex, ml, ident } from '../../core/util.js';
 import { parseLog } from '../../core/logparse.js';
 
@@ -459,7 +459,7 @@ function pairsBlock(f, route) {
     const proto = p.protocols && p.protocols.length ? html` <span class="badge">${p.protocols.join(' / ')}</span>` : '';
     const func = p.functionalId !== null && p.functionalId !== undefined ? html` · functional requests on ${partnerLinks(f, p.functionalId, av)}` : '';
     const tools = nodes.length === 1 && p.partnerId !== null && p.partnerId !== undefined
-      ? html` <a class="btn btn-sm" href="#/diag/request?${new URLSearchParams({ req: canIdText(p.role === 'response' ? p.partnerId : f.id), res: canIdText(p.role === 'response' ? f.id : p.partnerId), proto: (p.protocols || [])[0] || 'UDS' }).toString()}">request builder</a>${app.db.diag.ecus.has(`${av}/${nodes[0]}`) ? html` <a class="btn btn-sm" href="#/diag/ecu/${av}/${encodeURIComponent(nodes[0])}">diag data</a>` : ''}` : '';
+      ? html` <a class="btn btn-sm" href="#/diag/request?${new URLSearchParams({ req: canIdText(p.role === 'response' ? p.partnerId : f.id), res: canIdText(p.role === 'response' ? f.id : p.partnerId), proto: (p.protocols || [])[0] || 'UDS' }).toString()}">request builder</a>${diagEcusOfNode(app.db, av, nodes[0]).length ? html` <a class="btn btn-sm" href="#/diag/ecu/${av}/${encodeURIComponent(nodes[0])}">diag data</a>` : ''}` : '';
     let what;
     if (p.role === 'response') what = html`<b>Response</b> ${ecu} → tester${p.partnerId !== null && p.partnerId !== undefined ? html` · answers the request on ${partnerLinks(f, p.partnerId, av)}` : ''}`;
     else if (p.role === 'functional') what = html`<b>Functional request</b> tester → all ECUs${p.partnerId !== null && p.partnerId !== undefined ? html` · answered on ${partnerLinks(f, p.partnerId, av)}` : ''}`;

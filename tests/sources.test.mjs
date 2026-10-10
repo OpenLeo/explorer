@@ -66,6 +66,13 @@ test('paths and symlink helpers', () => {
   assert.equal(classify('buses/AEE2004.full/HS.IS/0B6_ALT.yml').suffix, 'ALT');
   assert.equal(classify('buses/AEE2004.full/HS.IS/0B6.yml').fileId, 0xB6);
   assert.equal(classify('diag/AEE2004.full/BSI/dids/F190.yml').kind, 'diag_did');
+  // ECU model level: diag/<archvar>/<node>/<model>/...
+  assert.equal(classify('diag/AEE2010.ev/BSI/BSI2010_EV/ecu.yml').kind, 'diag_ecu');
+  assert.equal(classify('diag/AEE2010.ev/BSI/BSI2010_EV/ecu.yml').model, 'BSI2010_EV');
+  assert.equal(classify('diag/AEE2010.ev/BSI/BSI2010_EV/dtcs.yml').kind, 'diag_dtcs');
+  assert.equal(classify('diag/AEE2010.ev/BSI/BSI2010_EV/dids/F080.yml').kind, 'diag_did');
+  assert.equal(classify('diag/AEE2010.ev/BSI/BSI2010_EV/dids/F080.yml').model, 'BSI2010_EV');
+  assert.equal(classify('diag/AEE2004.full/BSI/dids/F190.yml').model, null);
   assert.equal(classify('README.md'), null);
   assert.ok(looksLikeLinkText('../../AEE2004.full/HS.IS/0B6.yml'));
   assert.ok(!looksLikeLinkText('id: 0x036'));

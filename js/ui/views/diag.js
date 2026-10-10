@@ -10,7 +10,7 @@ import { renderGrid, renderLegend, hueMap } from '../bitgrid.js';
 import { UDS_SERVICES, KWP_SERVICES, OBD_SERVICES, NRC, UDS_SESSIONS, COMMON_DIDS, describeMessage } from '../../core/diagref.js';
 import { segment, flowControl, describeStMin } from '../../core/isotp.js';
 import { computeKey, ALGORITHM_DESCRIPTION } from '../../core/seedkey.js';
-import { dtcToRaw, rawToDtc, frameRoute } from '../../core/repo.js';
+import { dtcToRaw, rawToDtc, frameRoute, diagEcuKey, diagEcusOfNode } from '../../core/repo.js';
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -77,11 +77,11 @@ function addressingRows(db) {
     if (!e || !e.ecu) continue;
     for (const a of arr(e.ecu.addressing)) {
       if (!a) continue;
-      const k = `${e.archvar}|${e.node}|${a.request_id}|${a.response_id}|${a.kline_address}`;
+      const k = `${e.archvar}|${e.node}|${e.model || ''}|${a.request_id}|${a.response_id}|${a.kline_address}`;
       if (seen.has(k)) continue;
       seen.add(k);
       rows.push({
-        archvar: e.archvar, node: e.node, protocols: a.protocol ? [a.protocol] : arr(e.ecu.protocols), bus: a.bus || '',
+        archvar: e.archvar, node: e.node, model: e.model || null, protocols: a.protocol ? [a.protocol] : arr(e.ecu.protocols), bus: a.bus || '',
         transport: a.transport || 'can-tp', req: a.request_id, res: a.response_id, func: a.functional_id, kline: a.kline_address,
         source: e.source, from: 'diag',
       });
@@ -106,7 +106,9 @@ function addressingRows(db) {
   return rows;
 }
 
-function ecuDiagHref(archvar, node) { return `#/diag/ecu/${archvar}/${encodeURIComponent(node)}`; }
+/** node can be 'NODE' or 'NODE/MODEL' */
+function ecuDiagHref(archvar, node) { return `#/diag/ecu/${archvar}/${String(node).split('/').map(encodeURIComponent).join('/')}`; }
+const ecuRef = (e) => (e.model ? `${e.node}/${e.model}` : e.node);
 
 // ---------------------------------------------------------------------------
 // entry
@@ -131,7 +133,7 @@ export function renderDiag(root, route) {
     case 'protocols': body = renderProtocols(db); break;
     case 'protocol': body = renderProtocol(db, route.parts[2]); break;
     case 'addressing': body = renderAddressing(db, route); break;
-    case 'ecu': body = renderEcu(db, route.parts[2], route.parts[3], route); break;
+    case 'ecu': body = renderEcu(db, route.parts[2], route.parts[3], route, route.parts[4] || null); break;
     case 'dtc': body = renderDtcPage(db, route); break;
     case 'request': body = renderRequestPage(db, route); break;
     case 'seedkey': body = renderSeedKeyPage(db, route); break;
@@ -157,7 +159,7 @@ function renderOverview(db) {
   let dids = 0; let lids = 0; let routines = 0; let ioctls = 0;
   for (const e of dg.ecus.values()) { dids += arr(e.dids).length; lids += arr(e.lids).length; routines += arr(e.routines).length; ioctls += arr(e.ioctls).length; }
   const rows = addressingRows(db);
-  const ecus = [...dg.ecus.values()].sort((a, b) => naturalCompare(a.archvar, b.archvar) || naturalCompare(a.node, b.node));
+  const ecus = [...dg.ecus.values()].sort((a, b) => naturalCompare(a.archvar, b.archvar) || naturalCompare(a.node, b.node) || naturalCompare(a.model || '', b.model || ''));
   return html`${noDiagBanner(db)}
     <div class="cards">
       <div class="card"><h3><a href="#/diag/protocols">Protocols</a></h3><p>${dg.protocols.size ? `${dg.protocols.size} protocol definition(s): ${[...dg.protocols.keys()].join(', ')}` : 'Built-in UDS / KWP2000 / OBD reference (services, NRCs).'}</p></div>
@@ -168,8 +170,8 @@ function renderOverview(db) {
       <div class="card"><h3><a href="#/diag/seedkey">Seed / key</a></h3><p>PSA SecurityAccess key computation from a 4-byte seed and a 2-byte application key.</p></div>
     </div>
     ${ecus.length ? html`<h3>ECUs with diagnostic data</h3>
-      <div class="tablewrap"><table class="tbl"><thead><tr><th>Architecture</th><th>ECU</th><th>Protocols</th><th>DIDs</th><th>LIDs</th><th>DTCs</th><th>Routines</th><th>I/O</th><th>Source</th></tr></thead><tbody>
-      ${ecus.map((e) => html`<tr><td>${e.archvar}</td><td><a href="${ecuDiagHref(e.archvar, e.node)}"><b class="mono">${e.node}</b></a></td><td>${arr(e.ecu && e.ecu.protocols).join(', ')}</td>
+      <div class="tablewrap"><table class="tbl"><thead><tr><th>Architecture</th><th>ECU</th><th>Model</th><th>Protocols</th><th>DIDs</th><th>LIDs</th><th>DTCs</th><th>Routines</th><th>I/O</th><th>Source</th></tr></thead><tbody>
+      ${ecus.map((e) => html`<tr><td>${e.archvar}</td><td><a href="${ecuDiagHref(e.archvar, ecuRef(e))}"><b class="mono">${e.node}</b></a></td><td>${e.model ? html`<a class="mono" href="${ecuDiagHref(e.archvar, ecuRef(e))}">${e.model}</a>` : ''}</td><td>${arr(e.ecu && e.ecu.protocols).join(', ')}</td>
         <td class="num">${arr(e.dids).length}</td><td class="num">${arr(e.lids).length}</td><td class="num">${arr(e.dtcs).length}</td><td class="num">${arr(e.routines).length}</td><td class="num">${arr(e.ioctls).length}</td><td>${sourceBadge(e.source)}</td></tr>`)}
       </tbody></table></div>` : ''}
     <p class="muted small">Diagnostic access can change ECU configuration and, on the IS (high speed) bus, safety-relevant behavior. Use at your own risk.</p>`;
@@ -238,7 +240,7 @@ function addressingTable(db, q, archvar) {
   return html`<div class="tablewrap"><table class="tbl"><thead><tr><th>Architecture</th><th>ECU</th><th>Request ID</th><th>Response ID</th><th>Functional</th><th>Protocols</th><th>Transport</th><th>Bus</th><th>K-line addr.</th><th>OBD req/resp</th><th>From</th><th></th></tr></thead><tbody>
     ${rows.map((r) => html`<tr>
       <td>${r.archvar}</td>
-      <td>${nodeLink(r.archvar, r.node)}${dg.ecus.has(`${r.archvar}/${r.node}`) ? html` <a class="badge" href="${ecuDiagHref(r.archvar, r.node)}">diag data</a>` : ''}</td>
+      <td>${nodeLink(r.archvar, r.node)}${r.model ? html` <span class="mono small">${r.model}</span>` : ''}${dg.ecus.has(diagEcuKey(r.archvar, r.node, r.model)) ? html` <a class="badge" href="${ecuDiagHref(r.archvar, r.model ? `${r.node}/${r.model}` : r.node)}">diag data</a>` : ''}</td>
       <td>${idCell(r.req, r.archvar, r.bus)}</td><td>${idCell(r.res, r.archvar, r.bus)}</td><td>${idCell(r.func, r.archvar, r.bus)}</td>
       <td>${r.protocols.join(', ')}</td><td>${r.transport}</td><td class="mono">${r.bus}</td>
       <td>${isNum(r.kline) ? html`<code>0x${hx(r.kline, 2)}</code>` : ''}</td>
@@ -362,6 +364,13 @@ function itemDetail(item, archvar, node, route) {
     ${item.kind === 'routine' ? html`<nav class="pills"><a href="${itemHref(archvar, node, item)}&part=params" class="${which === 'params' ? 'active' : ''}">Parameters (request)</a><a href="${itemHref(archvar, node, item)}&part=results" class="${which === 'results' ? 'active' : ''}">Results (response)</a></nav>` : ''}
     ${sigs.length ? html`<div class="diaggrid">${renderGrid(pf, sigs, { hues })}</div>${renderLegend(sigs, hues)}` : ''}
     <h4>${which === 'results' ? 'Results' : 'Parameters'}</h4>${sigTable(sigs)}
+    ${arr(item.controls).length ? html`<h4>Control options</h4><table class="tbl compact"><tbody>${arr(item.controls).map((v) => html`<tr><td class="mono">0x${hx(v.raw, 2)}</td><td>${t(v.text)}</td></tr>`)}</tbody></table>` : ''}
+    ${arr(item.mapped).length ? html`<h4>Mapped values <span class="count">${arr(item.mapped).length}</span></h4>${item.mappedComment ? html`<p class="small muted">${t(item.mappedComment)}</p>` : ''}
+      <div class="tablewrap"><table class="tbl compact"><thead><tr><th>Index</th><th>Name</th><th>Bits</th><th>Type</th><th>Values</th><th>Comment</th></tr></thead><tbody>
+      ${arr(item.mapped).map((m) => html`<tr><td class="num">${isNum(m.index) ? m.index : ''}</td><td class="mono"><b>${m.name}</b></td><td class="num">${isNum(m.length) ? m.length : ''}</td><td>${m.type}</td>
+        <td class="small">${arr(m.values).slice(0, 8).map((v) => html`<div><code>0x${hx(v.raw, 2)}</code> ${t(v.text)}</div>`)}</td><td class="small">${t(m.comment)}</td></tr>`)}</tbody></table></div>` : ''}
+    ${arr(item.tests).length ? html`<h4>Actuator tests</h4><ul>${arr(item.tests).map((x) => html`<li>${t(x.displayName)}${isNum(x.maxMs) ? html` <span class="small muted">(max ${x.maxMs} ms)</span>` : ''}</li>`)}</ul>` : ''}
+    ${arr(item.alternatives).length ? html`<h4>Alternatives <span class="count">${arr(item.alternatives).length}</span></h4>${arr(item.alternatives).map((a) => html`<details class="card"><summary>${t(a.note)}${arr(a.variants).length ? html` <span class="small muted">${arr(a.variants).join(', ')}</span>` : ''}</summary>${sigTable(a.params)}</details>`)}` : ''}
     ${item.kind === 'routine' && arr(item.returnValues).length ? html`<h4>Return values</h4><div class="tablewrap"><table class="tbl compact"><tbody>${arr(item.returnValues).map((v) => html`<tr><td class="mono">0x${hx(v.raw, 2)}</td><td>${t(v.text)}</td></tr>`)}</tbody></table></div>` : ''}
     ${sigs.length ? html`<h4>Decode a payload</h4>
       <div class="row"><input id="dd-input" class="mono grow" data-live="didDecode" data-which="${which}" spellcheck="false" autocomplete="off" placeholder="data bytes or full positive response"></div>
@@ -378,12 +387,28 @@ function itemListTable(items, archvar, node, selected) {
   </tbody></table></div>`;
 }
 
-function renderEcu(db, archvar, node, route) {
+function modelPicker(archvar, node, models) {
+  return html`<h3>${node} <span class="muted">${archvar}</span></h3>
+    <p>This node exists as ${models.length} ECU models, each with its own diagnostic data:</p>
+    <div class="tablewrap"><table class="tbl"><thead><tr><th>Model</th><th>Description</th><th>Protocols</th><th>Cars</th><th>Variants</th><th>DIDs</th><th>LIDs</th><th>DTCs</th><th>Routines</th><th>I/O</th></tr></thead><tbody>
+    ${models.map((e) => html`<tr><td><a class="mono" href="${ecuDiagHref(archvar, ecuRef(e))}"><b>${e.model}</b></a></td><td>${t(e.ecu && e.ecu.displayName)}</td><td>${arr(e.ecu && e.ecu.protocols).join(', ')}</td>
+      <td class="small">${arr(e.ecu && e.ecu.cars).join(', ')}</td><td class="num">${arr(e.ecu && e.ecu.variants).length}</td>
+      <td class="num">${arr(e.dids).length}</td><td class="num">${arr(e.lids).length}</td><td class="num">${arr(e.dtcs).length}</td><td class="num">${arr(e.routines).length}</td><td class="num">${arr(e.ioctls).length}</td></tr>`)}
+    </tbody></table></div>`;
+}
+
+function renderEcu(db, archvar, node, route, model = null) {
   const dg = diagOf(db);
   if (!archvar || !node) return emptyState('No ECU selected', 'Pick an ECU in the addressing table.');
-  const e = dg.ecus.get(`${archvar}/${node}`) || null;
+  const e = dg.ecus.get(diagEcuKey(archvar, node, model)) || null;
+  if (!e && !model) {
+    const models = diagEcusOfNode(db, archvar, node).filter((x) => x.model).sort((a, b) => naturalCompare(a.model, b.model));
+    if (models.length === 1) return renderEcu(db, archvar, node, route, models[0].model);
+    if (models.length) return html`<p><a href="#/diag/addressing">← addressing</a></p>${modelPicker(archvar, node, models)}`;
+  }
+  const nk = model ? `${node}/${model}` : node;
   const nd = db && db.variantNodes && db.variantNodes.get(archvar) ? db.variantNodes.get(archvar).get(node) : null;
-  const addr = addressingRows(db).filter((r) => r.archvar === archvar && r.node === node);
+  const addr = addressingRows(db).filter((r) => r.archvar === archvar && r.node === node && (r.from !== 'diag' || (r.model || null) === (model || null)));
   if (!e && !addr.length) return html`${emptyState(`No diagnostic data for ${node}`, `Nothing in diag/${archvar}/${node}/ nor a diag block in nodes/${archvar}.yml.`)}<p><a href="#/ecus/${archvar}/${encodeURIComponent(node)}">ECU page</a></p>`;
   const ecu = (e && e.ecu) || {};
   const protos = arr(ecu.protocols).length ? arr(ecu.protocols) : arr(nd && nd.diag && nd.diag.protocols);
@@ -394,8 +419,14 @@ function renderEcu(db, archvar, node, route) {
   }
   const dtcs = e ? arr(e.dtcs) : [];
   return html`<p><a href="#/diag/addressing">← addressing</a></p>
-    <h3>${nodeLink(archvar, node)} <span class="muted">${archvar}</span> ${nd ? html`<span class="muted">${t(nd.title)}</span>` : ''} ${e ? sourceBadge(e.source) : ''}</h3>
+    <h3>${nodeLink(archvar, node)}${model ? html` <a class="mono" href="${ecuDiagHref(archvar, node)}">/</a> <span class="mono">${model}</span>` : ''} <span class="muted">${archvar}</span> ${nd ? html`<span class="muted">${t(nd.title)}</span>` : ''} ${e ? sourceBadge(e.source) : ''}</h3>
+    ${ecu.displayName ? html`<p><b>${t(ecu.displayName)}</b></p>` : ''}
     ${ecu.comment ? html`<p>${t(ecu.comment)}</p>` : ''}
+    ${ecu.identification || arr(ecu.cars).length ? kv([['Cars', arr(ecu.cars).join(', ')],
+      ['Part number', ecu.identification ? html`<code>${ecu.identification.request}</code> → data bits <code>${ecu.identification.partNumber}</code>${ecu.identification.comment ? html` <span class="small muted">${t(ecu.identification.comment)}</span>` : ''}` : null]]) : ''}
+    ${arr(ecu.variants).length ? html`<details class="card"><summary><b>Software variants</b> <span class="count">${arr(ecu.variants).length}</span></summary>
+      <div class="tablewrap"><table class="tbl compact"><thead><tr><th>Variant</th><th>Part numbers</th><th>Cars</th></tr></thead><tbody>
+      ${arr(ecu.variants).map((v) => html`<tr><td class="mono">${v.id}</td><td class="mono small">${v.parts.join(', ')}</td><td class="small">${v.cars.join(', ')}</td></tr>`)}</tbody></table></div></details>` : ''}
     ${!e ? html`<div class="notice">Only the addressing summary of <code>nodes/${archvar}.yml</code> is known for this ECU (no <code>diag/${archvar}/${node}/</code> directory).</div>` : ''}
     <div class="two-col">
       <div>
@@ -414,11 +445,11 @@ function renderEcu(db, archvar, node, route) {
             <td>${s.key ? html`<a class="btn btn-sm" href="#/diag/seedkey?key=${encodeURIComponent(s.key)}${isNum(s.level) ? `&level=${hx(s.level, 2)}` : ''}">compute key</a>` : ''}</td></tr>`)}</tbody></table>` : ''}
       </div>
     </div>
-    ${selected ? itemDetail(selected, archvar, node, route) : ''}
-    ${e && arr(e.dids).length ? html`<h3>DIDs <span class="count">${arr(e.dids).length}</span></h3>${itemListTable(arr(e.dids), archvar, node, selected)}` : ''}
-    ${e && arr(e.lids).length ? html`<h3>LIDs <span class="count">${arr(e.lids).length}</span></h3>${itemListTable(arr(e.lids), archvar, node, selected)}` : ''}
-    ${e && arr(e.routines).length ? html`<h3>Routines <span class="count">${arr(e.routines).length}</span></h3>${itemListTable(arr(e.routines), archvar, node, selected)}` : ''}
-    ${e && arr(e.ioctls).length ? html`<h3>I/O controls <span class="count">${arr(e.ioctls).length}</span></h3>${itemListTable(arr(e.ioctls), archvar, node, selected)}` : ''}
+    ${selected ? itemDetail(selected, archvar, nk, route) : ''}
+    ${e && arr(e.dids).length ? html`<h3>DIDs <span class="count">${arr(e.dids).length}</span></h3>${itemListTable(arr(e.dids), archvar, nk, selected)}` : ''}
+    ${e && arr(e.lids).length ? html`<h3>LIDs <span class="count">${arr(e.lids).length}</span></h3>${itemListTable(arr(e.lids), archvar, nk, selected)}` : ''}
+    ${e && arr(e.routines).length ? html`<h3>Routines <span class="count">${arr(e.routines).length}</span></h3>${itemListTable(arr(e.routines), archvar, nk, selected)}` : ''}
+    ${e && arr(e.ioctls).length ? html`<h3>I/O controls <span class="count">${arr(e.ioctls).length}</span></h3>${itemListTable(arr(e.ioctls), archvar, nk, selected)}` : ''}
     ${dtcs.length ? html`<h3>DTCs <span class="count">${dtcs.length}</span></h3>${dtcTable(dtcs)}` : ''}`;
 }
 
@@ -444,7 +475,7 @@ export function parseDtcQuery(q) {
 function dtcTable(list) {
   return html`<div class="tablewrap"><table class="tbl"><thead><tr><th>Code</th><th>Raw</th><th>ECU</th><th>Architecture</th><th>Description</th><th>Comment / clues</th></tr></thead><tbody>
     ${list.map((d) => html`<tr><td class="mono"><b>${d.code}</b></td><td class="mono">${isNum(d.raw) ? `0x${hex(d.raw, 4)}` : ''}</td>
-      <td><a href="${ecuDiagHref(d.archvar, d.node)}">${d.node}</a></td><td>${d.archvar}</td><td>${t(d.displayName)}${arr(d.variants).length ? html`<div class="small muted">${arr(d.variants).join(', ')}</div>` : ''}</td>
+      <td><a href="${ecuDiagHref(d.archvar, ecuRef(d))}">${d.node}${d.model ? ` ${d.model}` : ''}</a></td><td>${d.archvar}</td><td>${t(d.displayName)}${arr(d.variants).length ? html`<div class="small muted">${arr(d.variants).join(', ')}</div>` : ''}</td>
       <td class="small">${t(d.comment)}${d.clues ? html`<div class="muted">${t(d.clues)}</div>` : ''}</td></tr>`)}
   </tbody></table></div>`;
 }

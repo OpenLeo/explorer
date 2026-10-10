@@ -8,6 +8,7 @@ import {
 } from '../widgets.js';
 import { exportDbc } from '../../core/dbc.js';
 import { hex, naturalCompare, fmtNum, ident } from '../../core/util.js';
+import { diagEcusOfNode } from '../../core/repo.js';
 
 let listFilter = '';
 
@@ -25,7 +26,7 @@ function renderList(root, archvar) {
         <td>${t(n.title)}${n.alt.length ? html`<div class="small muted">${n.alt.join(', ')}</div>` : ''}</td><td class="small mono">${buses.join(', ')}</td>
         <td class="small mono">${Object.entries(n.ids).map(([net, id]) => `${net}:0x${hex(id, 2)}`).join(' ')}</td>
         <td class="num">${u ? u.sends.length : 0}</td><td class="num">${u ? u.receives.length : 0}</td>
-        <td>${n.diag ? html`<span class="badge">diag</span>` : ''}${db.diag.ecus.has(`${key}/${n.name}`) ? html`<a class="badge" href="#/diag/ecu/${key}/${encodeURIComponent(n.name)}">diag data</a>` : ''}${sourceBadge(n.source)}</td></tr>`;
+        <td>${n.diag ? html`<span class="badge">diag</span>` : ''}${diagEcusOfNode(db, key, n.name).length ? html`<a class="badge" href="#/diag/ecu/${key}/${encodeURIComponent(n.name)}">diag data</a>` : ''}${sourceBadge(n.source)}</td></tr>`;
     });
   setHtml(root, html`<div class="page">
     <h2>ECUs</h2>
@@ -106,7 +107,7 @@ function renderEcu(root, key, name) {
   const recv = u ? [...u.receives].sort((a, b) => a.id - b.id) : [];
   const cars = db.carsByNode.get(`${key}|${name}`) || [];
   const buses = node.buses.length ? node.buses : u ? [...u.buses] : [];
-  const diagData = db.diag.ecus.get(`${key}/${name}`);
+  const diagData = diagEcusOfNode(db, key, name).length > 0;
   const inOther = db.variantList.filter((v) => v.key !== key && (db.variantNodes.get(v.key) || new Map()).has(name) && !(db.variantNodes.get(v.key).get(name).phantom && !(db.nodeUsage.get(v.key) || new Map()).has(name)));
   const ftable = (list, dir) => list.length ? html`<div class="tablewrap"><table class="tbl compact"><thead><tr><th>ID</th><th>Name</th><th>Bus</th><th class="num">Len</th><th>Period</th><th>${dir === 'tx' ? 'Receivers' : 'Senders'}</th></tr></thead>
     <tbody>${list.map((f) => html`<tr><td>${frameLink(f)}</td><td class="mono">${f.name}</td><td class="mono small">${f.netbus}</td><td class="num">${f.length}</td><td class="small">${periodText(f)}</td><td class="small">${nodeList(key, dir === 'tx' ? f.receivers : f.senders, 8)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">None documented.</p>`;

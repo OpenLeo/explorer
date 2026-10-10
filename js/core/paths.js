@@ -57,12 +57,13 @@ export function classify(path) {
   }
   if (parts[0] === 'diag' && isYml) {
     if (parts[1] === 'protocols' && parts.length === 3) return { kind: 'diag_protocol', name: fn.replace(/\.ya?ml$/i, '') };
-    if (parts.length === 4 && fn === 'ecu.yml') return { kind: 'diag_ecu', archvar: parts[1], node: parts[2] };
-    if (parts.length === 4 && fn === 'dtcs.yml') return { kind: 'diag_dtcs', archvar: parts[1], node: parts[2] };
-    if (parts.length === 5) {
-      const sub = parts[3];
-      const map = { dids: 'diag_did', lids: 'diag_lid', routines: 'diag_routine', ioctls: 'diag_ioctl' };
-      if (map[sub]) return { kind: map[sub], archvar: parts[1], node: parts[2], file: fn };
+    // diag/<archvar>/<node>/... or diag/<archvar>/<node>/<model>/... (several ECU models for one node)
+    const map = { dids: 'diag_did', lids: 'diag_lid', routines: 'diag_routine', ioctls: 'diag_ioctl' };
+    if ((parts.length === 4 || parts.length === 5) && (fn === 'ecu.yml' || fn === 'dtcs.yml')) {
+      return { kind: fn === 'ecu.yml' ? 'diag_ecu' : 'diag_dtcs', archvar: parts[1], node: parts[2], model: parts.length === 5 ? parts[3] : null };
+    }
+    if ((parts.length === 5 || parts.length === 6) && map[parts[parts.length - 2]]) {
+      return { kind: map[parts[parts.length - 2]], archvar: parts[1], node: parts[2], model: parts.length === 6 ? parts[3] : null, file: fn };
     }
     return { kind: 'diag_unknown' };
   }
